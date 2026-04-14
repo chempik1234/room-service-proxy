@@ -1,13 +1,19 @@
 module github.com/chempik1234/room-service-proxy
 
-go 1.25.0
+go 1.25.1
 
 require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/joho/godotenv v1.4.0
+	go.uber.org/zap v1.27.1
 	google.golang.org/grpc v1.80.0
+)
+
+require (
+	github.com/chempik1234/super-danis-library-golang/v2 v2.2.3
+	go.uber.org/multierr v1.11.0 // indirect
 )
 
 require (

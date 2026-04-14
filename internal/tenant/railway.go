@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // Railway API methods
@@ -49,7 +48,7 @@ func (r *RailwayService) CreateMongoDB(projectID, tenantID, password string) (st
 	payload := map[string]interface{}{
 		"query": fmt.Sprintf(`
 			mutation($projectId: String!, $name: String!) {
-				serviceCreate(projectId: $projectId, name: $name, image: "mongo:6") {
+				serviceCreate(input: { projectId: $projectId, name: $name, source: { image: "mongo:6" } } ) {
 					id
 				}
 			}
@@ -91,7 +90,7 @@ func (r *RailwayService) CreateRedis(projectID, tenantID, password string) (stri
 	payload := map[string]interface{}{
 		"query": fmt.Sprintf(`
 			mutation($projectId: String!, $name: String!) {
-				serviceCreate(projectId: $projectId, name: $name, image: "redis:7") {
+				serviceCreate(input: { projectId: $projectId, name: $name, source: { image: "redis:7" } }) {
 					id
 				}
 			}
@@ -130,25 +129,16 @@ func (r *RailwayService) CreateRedis(projectID, tenantID, password string) (stri
 
 // CreateRoomService creates a RoomService
 func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisURL string) (*RoomServiceInfo, error) {
-	// TODO: Update to use your actual Docker image
-	// Option 1: Use Docker Hub image
-	dockerImage := "chempik1234/roomservice:latest" // Replace with your image
-
-	// Option 2: Use Railway registry
-	// dockerImage := "up.railway.app/yourusername/roomservice:latest"
+	dockerImage := "chempik1234/roomservice:latest"
 
 	payload := map[string]interface{}{
-		"query": fmt.Sprintf(`
+		"query": `
 			mutation($projectId: String!, $name: String!, $image: String!) {
-				serviceCreate(
-					projectId: $projectId,
-					name: $name,
-					image: $image
-				) {
+				serviceCreate(input: { projectId: $projectId, name: $name, source: { image: $image } }) {
 					id
 				}
 			}
-		`),
+		`,
 		"variables": map[string]interface{}{
 			"projectId": projectID,
 			"name":      tenantID,
@@ -175,11 +165,45 @@ func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisU
 
 	serviceID := result.Data.ServiceCreate.ID
 
-	// Set environment variables
+	// Set environment variables for RoomService
 	if err := r.setEnvironmentVariables(projectID, serviceID, map[string]string{
-		"MONGO_URL": mongoURL,
-		"REDIS_URL": redisURL,
-		"TENANT_ID": tenantID,
+		// Service configuration
+		"ROOM_SERVICE_GRPC_PORT":                    "50050",
+		"ROOM_SERVICE_USE_AUTH":                     "true",
+		"ROOM_SERVICE_API_KEY":                      generateRandomPassword(32),
+		"ROOM_SERVICE_RETRY_ATTEMPTS":               "3",
+		"ROOM_SERVICE_RETRY_DELAY_MILLISECONDS":     "500",
+		"ROOM_SERVICE_RETRY_BACKOFF":                "1",
+		"ROOM_SERVICE_LOG_LEVEL":                    "info",
+
+		// MongoDB configuration
+		"ROOM_SERVICE_ROOMS_MONGODB_DATABASE":        "rooms_db",
+		"ROOM_SERVICE_ROOMS_MONGODB_ROOMS_COLLECTION": "rooms",
+		"ROOM_SERVICE_ROOMS_MONGODB_READ_CONCERN":    "available",
+		"ROOM_SERVICE_ROOMS_MONGODB_WRITE_CONCERN":   "w: 1",
+		"ROOM_SERVICE_MONGODB_HOSTS":                 mongoURL,
+		"ROOM_SERVICE_MONGODB_MIN_POOL_SIZE":         "1",
+		"ROOM_SERVICE_MONGODB_MAX_POOL_SIZE":         "10",
+		"ROOM_SERVICE_MONGODB_USERNAME":             "admin",
+		"ROOM_SERVICE_MONGODB_PASSWORD":             generateRandomPassword(32),
+		"ROOM_SERVICE_MONGODB_PASSWORD_SET":         "true",
+		"ROOM_SERVICE_MONGODB_RETRY_WRITES":         "true",
+		"ROOM_SERVICE_MONGODB_RETRY_READS":          "true",
+
+		// Redis configuration
+		"ROOM_SERVICE_REDIS_ADDR":                   redisURL,
+		"ROOM_SERVICE_REDIS_PASSWORD":               generateRandomPassword(32),
+		"ROOM_SERVICE_REDIS_DB":                     "0",
+		"ROOM_SERVICE_REDIS_TTL_SECONDS":            "3600",
+		"ROOM_SERVICE_REDIS_TIMEOUT_DIAL_MILLISECONDS": "5000",
+		"ROOM_SERVICE_REDIS_TIMEOUT_READ_MILLISECONDS":  "1000",
+		"ROOM_SERVICE_REDIS_TIMEOUT_WRITE_MILLISECONDS": "1000",
+		"ROOM_SERVICE_REDIS_RETRIES_MAX_RETRIES":    "3",
+		"ROOM_SERVICE_REDIS_POOL_SIZE":              "3",
+		"ROOM_SERVICE_REDIS_POOL_MIN_IDLE_CONNECTIONS": "2",
+
+		// Tenant identification
+		"TENANT_ID":                                tenantID,
 	}); err != nil {
 		return nil, err
 	}
@@ -270,8 +294,7 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 	req.Header.Set("Authorization", "Bearer "+r.Token)
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -285,12 +308,60 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 }
 
 func (r *RailwayService) getServiceURL(projectID, serviceID, serviceType string) (string, error) {
-	// Railway service URLs follow the pattern:
-	// https://<project-id>-<service-id>.up.railway.app
+	// Railway service addressing:
+	// Private: <service>.railway.internal
+	// Public: <something>.uprailway.app
 
-	// For now, return the Railway public URL pattern
+	// For database connections (MongoDB, Redis), use private addressing for performance
+	if serviceType == "mongodb" || serviceType == "redis" {
+		return fmt.Sprintf("%s.railway.internal", serviceID), nil
+	}
+
+	// For RoomService, use public URL pattern
 	// In production, you'd query Railway's API for the actual domain
-	return fmt.Sprintf("%s-%s.up.railway.app", projectID, serviceID), nil
+	return fmt.Sprintf("%s-%s.uprailway.app", projectID, serviceID), nil
+}
+
+// DeleteService deletes a Railway service (idempotent - silent fail if not exists)
+func (r *RailwayService) DeleteService(serviceID string) error {
+	payload := map[string]interface{}{
+		"query": fmt.Sprintf(`
+			mutation {
+				serviceDelete(serviceId: "%s")
+			}
+		`, serviceID),
+	}
+
+	// Silent fail - if service doesn't exist, that's fine for idempotent cleanup
+	_, err := r.makeRequest(payload)
+	if err != nil {
+		// Log but don't return error - this makes it idempotent
+		fmt.Printf("Warning: failed to delete service %s (may not exist): %v\n", serviceID, err)
+		return nil
+	}
+
+	return nil
+}
+
+// DeleteProject deletes a Railway project (idempotent - silent fail if not exists)
+func (r *RailwayService) DeleteProject(projectID string) error {
+	payload := map[string]interface{}{
+		"query": fmt.Sprintf(`
+			mutation {
+				projectDelete(projectId: "%s")
+			}
+		`, projectID),
+	}
+
+	// Silent fail - if project doesn't exist, that's fine for idempotent cleanup
+	_, err := r.makeRequest(payload)
+	if err != nil {
+		// Log but don't return error - this makes it idempotent
+		fmt.Printf("Warning: failed to delete project %s (may not exist): %v\n", projectID, err)
+		return nil
+	}
+
+	return nil
 }
 
 func (r *RailwayService) setEnvironmentVariables(projectID, serviceID string, vars map[string]string) error {
@@ -302,7 +373,7 @@ func (r *RailwayService) setEnvironmentVariables(projectID, serviceID string, va
 		`,
 		"variables": map[string]interface{}{
 			"serviceId": serviceID,
-			"vars":     vars,
+			"vars":      vars,
 		},
 	}
 

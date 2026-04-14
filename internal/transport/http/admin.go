@@ -1,4 +1,4 @@
-package api
+package http
 
 import (
 	"context"
@@ -67,16 +67,6 @@ func SetupRoutes(api *AdminAPI) *gin.Engine {
 
 	// Status endpoint (no auth required)
 	router.GET("/status", api.status)
-
-	// gRPC proxy endpoint (for Railway compatibility)
-	/* TODO: what's with these?
-	apiGRPC := router.Group("/grpc")
-	apiGRPC.Use(api.grpcProxyMiddleware())
-	{
-		apiGRPC.POST("/command", api.grpcSingleCommand)
-		apiGRPC.POST("/stream", api.grpcStream)
-	}
-	*/
 
 	return router
 }
@@ -530,69 +520,3 @@ func parseInt(s string) (int, error) {
 	_, err := fmt.Sscanf(s, "%d", &result)
 	return result, err
 }
-
-/* TODO: what's with these?
-
-// grpcProxyMiddleware handles gRPC-over-HTTP requests
-func (api *AdminAPI) grpcProxyMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		// Set CORS headers for gRPC-Web
-		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization, grpc-timeout, grpc-accept-encoding")
-
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(http.StatusNoContent)
-			return
-		}
-
-		// Validate API key for gRPC requests
-		apiKey := c.GetHeader("X-API-Key")
-		if apiKey == "" {
-			apiKey = c.GetHeader("x-api-key")
-		}
-
-		if apiKey == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "API key required for gRPC requests"})
-			c.Abort()
-			return
-		}
-
-		// Set API key in context for use in handlers
-		c.Set("apiKey", apiKey)
-
-		c.Next()
-	}
-}
-
-// grpcSingleCommand handles gRPC SingleCommand over HTTP
-func (api *AdminAPI) grpcSingleCommand(c *gin.Context) {
-	// Get API key from context
-	apiKey := c.GetString("apiKey")
-
-	// Parse request body
-	var requestBody map[string]interface{}
-	if err := c.ShouldBindJSON(&requestBody); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON request"})
-		return
-	}
-
-	// TODO: Forward this to the actual gRPC backend
-	// For now, return a placeholder response
-	c.JSON(http.StatusOK, gin.H{
-		"timestamp": fmt.Sprintf("%d", time.Now().Unix()),
-		"roomId": requestBody["room_id"],
-		"userId": requestBody["user_id"],
-		"payload": "singleCommand",
-		"message": "gRPC HTTP proxy not fully implemented - use direct gRPC connection on port 50051",
-	})
-}
-
-// grpcStream handles gRPC streaming over HTTP (WebSocket)
-func (api *AdminAPI) grpcStream(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"error": "gRPC streaming over HTTP not implemented - use direct gRPC connection on port 50051",
-	})
-}
-
-*/
