@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -15,6 +16,7 @@ type AdminAPI struct {
 	db          *pgxpool.Pool
 	adminAPIKey string
 	tenantSvc   *tenant.Service
+	authAPI     *AuthAPI
 }
 
 // NewAdminAPI creates a new admin API
@@ -23,6 +25,7 @@ func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string) *AdminAPI {
 		db:          db,
 		adminAPIKey: adminAPIKey,
 		tenantSvc:   tenant.NewService(db, ""), // Railway token set separately
+		authAPI:     NewAuthAPI(db),
 	}
 }
 
@@ -33,34 +36,41 @@ func SetupRoutes(api *AdminAPI) *gin.Engine {
 	router.Use(gin.Recovery())
 	router.Use(gin.Logger())
 	router.Use(api.corsMiddleware())
-	router.Use(api.authMiddleware())
 
-	// Tenant routes
-	router.POST("/api/tenants", api.createTenant)
-	router.GET("/api/tenants", api.listTenants)
-	router.GET("/api/tenants/:id", api.getTenant)
-	router.PUT("/api/tenants/:id", api.updateTenant)
-	router.DELETE("/api/tenants/:id", api.deleteTenant)
-	router.POST("/api/tenants/:id/regenerate-api-key", api.regenerateAPIKey)
+	// Public routes (authentication)
+	router.POST("/api/auth/signup", api.authAPI.Signup)
+	router.POST("/api/auth/login", api.authAPI.Login)
+	router.POST("/api/auth/logout", api.authAPI.Logout)
 
-	// Health check
+	// Protected routes (require authentication)
+	protected := router.Group("/api")
+	protected.Use(api.authMiddleware())
+	{
+		// Tenant routes
+		protected.POST("/tenants", api.createTenant)
+		protected.GET("/tenants", api.listTenants)
+		protected.GET("/tenants/:id", api.getTenant)
+		protected.PUT("/tenants/:id", api.updateTenant)
+		protected.DELETE("/tenants/:id", api.deleteTenant)
+		protected.POST("/tenants/:id/regenerate-api-key", api.regenerateAPIKey)
+
+		// Stats and logs
+		protected.GET("/stats", api.getStats)
+		protected.GET("/logs", api.getLogs)
+	}
+
+	// Health check (no auth required)
 	router.GET("/health", api.healthCheck)
 
-	// Status endpoint
+	// Status endpoint (no auth required)
 	router.GET("/status", api.status)
 
 	return router
 }
 
-// authMiddleware validates admin API key
+// authMiddleware validates admin API key or user token
 func (api *AdminAPI) authMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// Skip auth for health check
-		if c.Request.URL.Path == "/health" || c.Request.URL.Path == "/status" {
-			c.Next()
-			return
-		}
-
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing authorization header"})
@@ -68,17 +78,30 @@ func (api *AdminAPI) authMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization format"})
-			c.Abort()
-			return
-		}
+		// Check if it's a Bearer token (user auth) or raw API key (admin auth)
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			// User authentication
+			token := strings.TrimPrefix(authHeader, "Bearer ")
+			user, err := api.authAPI.GetUserFromToken(token)
+			if err != nil {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid or expired token"})
+				c.Abort()
+				return
+			}
 
-		if parts[1] != api.adminAPIKey {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
-			c.Abort()
-			return
+			// Set user context
+			c.Set("user", user)
+			c.Set("authType", "user")
+		} else {
+			// Admin API key authentication
+			if authHeader != api.adminAPIKey {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid admin API key"})
+				c.Abort()
+				return
+			}
+
+			// Set admin context
+			c.Set("authType", "admin")
 		}
 
 		c.Next()
@@ -119,6 +142,14 @@ func (api *AdminAPI) createTenant(c *gin.Context) {
 		return
 	}
 
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "user" {
+		// Regular user creating tenant - set their user_id
+		user := c.MustGet("user").(*User)
+		req.UserID = user.ID
+	}
+
 	// Create tenant
 	newTenant, err := api.tenantSvc.CreateTenantWithProvisioning(c.Request.Context(), &req)
 	if err != nil {
@@ -129,20 +160,41 @@ func (api *AdminAPI) createTenant(c *gin.Context) {
 	c.JSON(http.StatusCreated, newTenant)
 }
 
-// listTenants lists all tenants
+// listTenants lists all tenants (or user's tenants if not admin)
 func (api *AdminAPI) listTenants(c *gin.Context) {
 	repo := tenant.NewRepository(api.db)
 
-	tenants, err := repo.List(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	var tenants interface{}
+	var err error
 
-	c.JSON(http.StatusOK, gin.H{
-		"tenants": tenants,
-		"count":   len(tenants),
-	})
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "admin" {
+		// Admin can see all tenants
+		tenants, err = repo.List(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"tenants": tenants,
+			"count":   len(tenants.([]tenant.Tenant)),
+		})
+	} else {
+		// Regular user can only see their own tenants
+		user := c.MustGet("user").(*User)
+		tenants, err = repo.ListByUserID(c.Request.Context(), user.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"tenants": tenants,
+			"count":   len(tenants.([]tenant.Tenant)),
+		})
+	}
 }
 
 // getTenant gets a specific tenant
@@ -291,4 +343,96 @@ func (api *AdminAPI) status(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, status)
+}
+
+// getStats returns statistics for the dashboard
+func (api *AdminAPI) getStats(c *gin.Context) {
+	repo := tenant.NewRepository(api.db)
+
+	// Get all tenants
+	tenants, err := repo.List(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Calculate stats
+	totalTenants := len(tenants)
+	activeTenants := 0
+	suspendedTenants := 0
+
+	for _, tenant := range tenants {
+		if tenant.Status == "active" {
+			activeTenants++
+		} else if tenant.Status == "suspended" {
+			suspendedTenants++
+		}
+	}
+
+	// Get total requests from logs
+	var totalRequests int64
+	err = api.db.QueryRow(c.Request.Context(),
+		"SELECT COUNT(*) FROM request_logs").
+		Scan(&totalRequests)
+	if err != nil {
+		totalRequests = 0
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"totalTenants":     totalTenants,
+		"activeTenants":    activeTenants,
+		"suspendedTenants": suspendedTenants,
+		"totalRequests":    totalRequests,
+	})
+}
+
+// getLogs returns recent request logs
+func (api *AdminAPI) getLogs(c *gin.Context) {
+	// Get query parameters
+	limit := 100
+	if limitParam := c.Query("limit"); limitParam != "" {
+		if l, err := parseInt(limitParam); err == nil && l > 0 && l <= 1000 {
+			limit = l
+		}
+	}
+
+	// Query recent logs
+	rows, err := api.db.Query(c.Request.Context(),
+		`SELECT tenant_id, method, path, status_code, response_time, created_at
+		 FROM request_logs
+		 ORDER BY created_at DESC
+		 LIMIT $1`, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type LogEntry struct {
+		TenantID     string `json:"tenantId"`
+		Method       string `json:"method"`
+		Path         string `json:"path"`
+		StatusCode   int    `json:"statusCode"`
+		ResponseTime int    `json:"responseTime"`
+		Timestamp    string `json:"timestamp"`
+	}
+
+	logs := []LogEntry{}
+	for rows.Next() {
+		var log LogEntry
+		err := rows.Scan(&log.TenantID, &log.Method, &log.Path, &log.StatusCode, &log.ResponseTime, &log.Timestamp)
+		if err != nil {
+			continue
+		}
+		logs = append(logs, log)
+	}
+
+	c.JSON(http.StatusOK, logs)
+}
+
+// parseInt safely parses a string to int
+func parseInt(s string) (int, error) {
+	var result int
+	_, err := fmt.Sscanf(s, "%d", &result)
+	return result, err
 }

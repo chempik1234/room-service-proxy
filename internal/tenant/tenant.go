@@ -12,6 +12,7 @@ import (
 // Tenant represents a tenant in the system
 type Tenant struct {
 	ID             string    `json:"id"`
+	UserID         string    `json:"user_id"` // Owner of the tenant
 	Name           string    `json:"name"`
 	Email          string    `json:"email"`
 	APIKey         string    `json:"api_key"`
@@ -58,17 +59,17 @@ func (r *Repository) Create(ctx context.Context, tenant *Tenant) error {
 	}
 
 	query := `
-		INSERT INTO tenants (id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-		RETURNING id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
+		INSERT INTO tenants (id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		RETURNING id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 	`
 
 	err := r.db.QueryRow(ctx, query,
-		tenant.ID, tenant.Name, tenant.Email, tenant.APIKey,
+		tenant.ID, tenant.UserID, tenant.Name, tenant.Email, tenant.APIKey,
 		tenant.Host, tenant.Port, tenant.Status, tenant.Plan,
 		tenant.MaxRooms, tenant.MaxRPS, tenant.CreatedAt, tenant.UpdatedAt,
 	).Scan(
-		&tenant.ID, &tenant.Name, &tenant.Email, &tenant.APIKey,
+		&tenant.ID, &tenant.UserID, &tenant.Name, &tenant.Email, &tenant.APIKey,
 		&tenant.Host, &tenant.Port, &tenant.Status, &tenant.Plan,
 		&tenant.MaxRooms, &tenant.MaxRPS, &tenant.CreatedAt, &tenant.UpdatedAt,
 	)
@@ -84,12 +85,12 @@ func (r *Repository) Create(ctx context.Context, tenant *Tenant) error {
 func (r *Repository) GetByID(ctx context.Context, id string) (*Tenant, error) {
 	var tenant Tenant
 	query := `
-		SELECT id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
+		SELECT id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 		FROM tenants WHERE id = $1
 	`
 
 	err := r.db.QueryRow(ctx, query, id).Scan(
-		&tenant.ID, &tenant.Name, &tenant.Email, &tenant.APIKey,
+		&tenant.ID, &tenant.UserID, &tenant.Name, &tenant.Email, &tenant.APIKey,
 		&tenant.Host, &tenant.Port, &tenant.Status, &tenant.Plan,
 		&tenant.MaxRooms, &tenant.MaxRPS, &tenant.CreatedAt, &tenant.UpdatedAt,
 	)
@@ -105,12 +106,12 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*Tenant, error) {
 func (r *Repository) GetByAPIKey(ctx context.Context, apiKey string) (*Tenant, error) {
 	var tenant Tenant
 	query := `
-		SELECT id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
+		SELECT id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 		FROM tenants WHERE api_key = $1
 	`
 
 	err := r.db.QueryRow(ctx, query, apiKey).Scan(
-		&tenant.ID, &tenant.Name, &tenant.Email, &tenant.APIKey,
+		&tenant.ID, &tenant.UserID, &tenant.Name, &tenant.Email, &tenant.APIKey,
 		&tenant.Host, &tenant.Port, &tenant.Status, &tenant.Plan,
 		&tenant.MaxRooms, &tenant.MaxRPS, &tenant.CreatedAt, &tenant.UpdatedAt,
 	)
@@ -125,7 +126,7 @@ func (r *Repository) GetByAPIKey(ctx context.Context, apiKey string) (*Tenant, e
 // List retrieves all tenants
 func (r *Repository) List(ctx context.Context) ([]*Tenant, error) {
 	query := `
-		SELECT id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
+		SELECT id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 		FROM tenants ORDER BY created_at DESC
 	`
 
@@ -139,7 +140,37 @@ func (r *Repository) List(ctx context.Context) ([]*Tenant, error) {
 	for rows.Next() {
 		var tenant Tenant
 		err := rows.Scan(
-			&tenant.ID, &tenant.Name, &tenant.Email, &tenant.APIKey,
+			&tenant.ID, &tenant.UserID, &tenant.Name, &tenant.Email, &tenant.APIKey,
+			&tenant.Host, &tenant.Port, &tenant.Status, &tenant.Plan,
+			&tenant.MaxRooms, &tenant.MaxRPS, &tenant.CreatedAt, &tenant.UpdatedAt,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan tenant: %w", err)
+		}
+		tenants = append(tenants, &tenant)
+	}
+
+	return tenants, nil
+}
+
+// ListByUserID retrieves tenants for a specific user
+func (r *Repository) ListByUserID(ctx context.Context, userID string) ([]*Tenant, error) {
+	query := `
+		SELECT id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
+		FROM tenants WHERE user_id = $1 ORDER BY created_at DESC
+	`
+
+	rows, err := r.db.Query(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tenants by user ID: %w", err)
+	}
+	defer rows.Close()
+
+	var tenants []*Tenant
+	for rows.Next() {
+		var tenant Tenant
+		err := rows.Scan(
+			&tenant.ID, &tenant.UserID, &tenant.Name, &tenant.Email, &tenant.APIKey,
 			&tenant.Host, &tenant.Port, &tenant.Status, &tenant.Plan,
 			&tenant.MaxRooms, &tenant.MaxRPS, &tenant.CreatedAt, &tenant.UpdatedAt,
 		)
@@ -161,14 +192,14 @@ func (r *Repository) Update(ctx context.Context, tenant *Tenant) error {
 		SET name = $2, email = $3, host = $4, port = $5, status = $6,
 		    plan = $7, max_rooms = $8, max_rps = $9, updated_at = $10
 		WHERE id = $1
-		RETURNING id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
+		RETURNING id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 	`
 
 	err := r.db.QueryRow(ctx, query,
 		tenant.ID, tenant.Name, tenant.Email, tenant.Host, tenant.Port,
 		tenant.Status, tenant.Plan, tenant.MaxRooms, tenant.MaxRPS, tenant.UpdatedAt,
 	).Scan(
-		&tenant.ID, &tenant.Name, &tenant.Email, &tenant.APIKey,
+		&tenant.ID, &tenant.UserID, &tenant.Name, &tenant.Email, &tenant.APIKey,
 		&tenant.Host, &tenant.Port, &tenant.Status, &tenant.Plan,
 		&tenant.MaxRooms, &tenant.MaxRPS, &tenant.CreatedAt, &tenant.UpdatedAt,
 	)

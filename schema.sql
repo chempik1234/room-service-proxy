@@ -1,8 +1,24 @@
 -- RoomService Proxy Database Schema
 
+-- Create users table for authentication
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user', -- admin, user
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Create indexes for users
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+
 -- Create tenants table
 CREATE TABLE IF NOT EXISTS tenants (
     id TEXT PRIMARY KEY,
+    user_id TEXT REFERENCES users(id) ON DELETE CASCADE, -- Track tenant ownership
     name TEXT NOT NULL,
     email TEXT NOT NULL,
     api_key TEXT UNIQUE NOT NULL,

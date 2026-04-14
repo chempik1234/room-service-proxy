@@ -35,9 +35,10 @@ func NewService(db *pgxpool.Pool, railwayToken string) *Service {
 func (s *Service) CreateTenantWithProvisioning(ctx context.Context, req *CreateTenantRequest) (*Tenant, error) {
 	// Create tenant record first
 	tenant := &Tenant{
-		Name:  req.Name,
-		Email: req.Email,
-		Plan:  req.Plan,
+		UserID: req.UserID,
+		Name:   req.Name,
+		Email:  req.Email,
+		Plan:   req.Plan,
 	}
 
 	repo := NewRepository(s.db)
@@ -150,9 +151,10 @@ type RailwayProject struct {
 
 // CreateTenantRequest represents a request to create a tenant
 type CreateTenantRequest struct {
-	Name  string `json:"name"`
-	Email string `json:"email"`
-	Plan  string `json:"plan"` // free, pro, enterprise
+	UserID string `json:"user_id"` // Optional user ID (for user-created tenants)
+	Name   string `json:"name"`
+	Email  string `json:"email"`
+	Plan   string `json:"plan"` // free, pro, enterprise
 }
 
 // generateRandomPassword generates a secure random password
