@@ -346,11 +346,26 @@ func (api *AdminAPI) status(c *gin.Context) {
 func (api *AdminAPI) getStats(c *gin.Context) {
 	repo := tenant.NewRepository(api.db)
 
-	// Get all tenants
-	tenants, err := repo.List(c.Request.Context())
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	var tenants []*tenant.Tenant
+	var err error
+
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "admin" {
+		// Admin can see stats for all tenants
+		tenants, err = repo.List(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+	} else {
+		// Regular user can only see stats for their own tenants
+		user := c.MustGet("user").(*User)
+		tenants, err = repo.ListByUserID(c.Request.Context(), user.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
 	}
 
 	// Calculate stats
@@ -366,11 +381,25 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 		}
 	}
 
-	// Get total requests from logs
+	// Get total requests from logs - filter by user's tenants if not admin
 	var totalRequests int64
-	err = api.db.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM request_logs").
-		Scan(&totalRequests)
+	if authType == "admin" {
+		err = api.db.QueryRow(c.Request.Context(),
+			"SELECT COUNT(*) FROM request_logs").
+			Scan(&totalRequests)
+	} else {
+		// For regular users, count only requests for their tenants
+		tenantIDs := make([]string, len(tenants))
+		for i, tenant := range tenants {
+			tenantIDs[i] = tenant.ID
+		}
+
+		err = api.db.QueryRow(c.Request.Context(),
+			"SELECT COUNT(*) FROM request_logs WHERE tenant_id = ANY($1)",
+			tenantIDs).
+			Scan(&totalRequests)
+	}
+
 	if err != nil {
 		totalRequests = 0
 	}
@@ -393,12 +422,45 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 		}
 	}
 
-	// Query recent logs
-	rows, err := api.db.Query(c.Request.Context(),
-		`SELECT tenant_id, method, path, status_code, response_time, created_at
-		 FROM request_logs
-		 ORDER BY created_at DESC
-		 LIMIT $1`, limit)
+	var rows *pgx.Rows
+	var err error
+
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "admin" {
+		// Admin can see logs for all tenants
+		rows, err = api.db.Query(c.Request.Context(),
+			`SELECT tenant_id, method, path, status_code, response_time, created_at
+			 FROM request_logs
+			 ORDER BY created_at DESC
+			 LIMIT $1`, limit)
+	} else {
+		// Regular user can only see logs for their own tenants
+		user := c.MustGet("user").(*User)
+
+		// Get user's tenants
+		repo := tenant.NewRepository(api.db)
+		tenants, err := repo.ListByUserID(c.Request.Context(), user.ID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Get tenant IDs
+		tenantIDs := make([]string, len(tenants))
+		for i, tenant := range tenants {
+			tenantIDs[i] = tenant.ID
+		}
+
+		// Query logs only for user's tenants
+		rows, err = api.db.Query(c.Request.Context(),
+			`SELECT tenant_id, method, path, status_code, response_time, created_at
+			 FROM request_logs
+			 WHERE tenant_id = ANY($1)
+			 ORDER BY created_at DESC
+			 LIMIT $2`, tenantIDs, limit)
+	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
