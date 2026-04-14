@@ -1,0 +1,68 @@
+# Railway.toml - RoomService Proxy Configuration
+
+[project]
+# Project name
+name = "roomservice-proxy"
+
+# Build configuration
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+# Service configuration
+[[services]]
+name = "proxy"
+
+# Environment variables (set in Railway dashboard)
+[services.config]
+DATABASE_URL = "${{Postgres.DATABASE_URL}}"
+ADMIN_API_KEY = "${{ADMIN_API_KEY}}"
+GRPC_PORT = "50051"
+ADMIN_PORT = "8080"
+RATE_LIMIT_RPS = "100"
+RATE_LIMIT_WINDOW = "60s"
+RATE_LIMIT_BURST = "10"
+ENABLE_AUTH = "true"
+ENABLE_RATE_LIMIT = "true"
+
+# Port configuration
+[[services.ports]]
+port = 50051
+type = "GRPC"
+name = "grpc"
+
+[[services.ports]]
+port = 8080
+type = "HTTP"
+name = "http"
+
+# Health check
+[[services.health_checks]]
+path = "/health"
+interval = "30s"
+timeout = "3s"
+retries = 3
+
+# Database service
+[[services]]
+name = "postgres"
+image = "postgres:16-alpine"
+
+[services.config]
+POSTGRES_USER = "postgres"
+POSTGRES_DB = "roomservice_proxy"
+POSTGRES_PASSWORD = "${{Postgres.POSTGRES_PASSWORD}}"
+
+[[services.ports]]
+port = 5432
+type = "TCP"
+
+# Volumes for data persistence
+[[services.volumes]]
+name = "data"
+mount_to = "/var/lib/postgresql/data"
+
+# Build configuration
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"

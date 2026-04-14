@@ -33,8 +33,6 @@ vendor/
 Thumbs.db
 
 # Railway specific
-railway.toml
-# Uncomment if you want to include Railway.toml in repo
 # railway.toml
 
 # Database dumps
