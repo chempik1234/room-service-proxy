@@ -130,10 +130,21 @@ func (r *RailwayService) CreateRedis(projectID, tenantID, password string) (stri
 
 // CreateRoomService creates a RoomService
 func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisURL string) (*RoomServiceInfo, error) {
+	// TODO: Update to use your actual Docker image
+	// Option 1: Use Docker Hub image
+	dockerImage := "chempik1234/roomservice:latest" // Replace with your image
+
+	// Option 2: Use Railway registry
+	// dockerImage := "up.railway.app/yourusername/roomservice:latest"
+
 	payload := map[string]interface{}{
 		"query": fmt.Sprintf(`
-			mutation($projectId: String!, $name: String!) {
-				serviceCreate(projectId: $projectId, name: $name) {
+			mutation($projectId: String!, $name: String!, $image: String!) {
+				serviceCreate(
+					projectId: $projectId,
+					name: $name,
+					image: $image
+				) {
 					id
 				}
 			}
@@ -141,6 +152,7 @@ func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisU
 		"variables": map[string]interface{}{
 			"projectId": projectID,
 			"name":      tenantID,
+			"image":     dockerImage,
 		},
 	}
 
@@ -273,11 +285,11 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 }
 
 func (r *RailwayService) getServiceURL(projectID, serviceID, serviceType string) (string, error) {
-	// This is a simplified version. In reality, you'd need to query Railway
-	// for the actual service URL or domain.
-	// For now, return a placeholder that would be replaced with the actual URL.
+	// Railway service URLs follow the pattern:
+	// https://<project-id>-<service-id>.up.railway.app
 
-	// In production, you'd use Railway's domain API
+	// For now, return the Railway public URL pattern
+	// In production, you'd query Railway's API for the actual domain
 	return fmt.Sprintf("%s-%s.up.railway.app", projectID, serviceID), nil
 }
 

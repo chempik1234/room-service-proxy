@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
@@ -65,6 +67,14 @@ func SetupRoutes(api *AdminAPI) *gin.Engine {
 
 	// Status endpoint (no auth required)
 	router.GET("/status", api.status)
+
+	// gRPC proxy endpoint (for Railway compatibility)
+	apiGRPC := router.Group("/grpc")
+	apiGRPC.Use(api.grpcProxyMiddleware())
+	{
+		apiGRPC.POST("/command", api.grpcSingleCommand)
+		apiGRPC.POST("/stream", api.grpcStream)
+	}
 
 	return router
 }
@@ -274,9 +284,19 @@ func (api *AdminAPI) updateTenant(c *gin.Context) {
 func (api *AdminAPI) deleteTenant(c *gin.Context) {
 	id := c.Param("id")
 
+	// Validate input
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tenant ID is required"})
+		return
+	}
+
+	// Add timeout to context
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
 	repo := tenant.NewRepository(api.db)
-	if err := repo.Delete(c.Request.Context(), id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+	if err := repo.Delete(ctx, id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete tenant: %v", err)})
 		return
 	}
 
@@ -287,10 +307,20 @@ func (api *AdminAPI) deleteTenant(c *gin.Context) {
 func (api *AdminAPI) regenerateAPIKey(c *gin.Context) {
 	id := c.Param("id")
 
+	// Validate input
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tenant ID is required"})
+		return
+	}
+
+	// Add timeout to context
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
 	repo := tenant.NewRepository(api.db)
-	newAPIKey, err := repo.RegenerateAPIKey(c.Request.Context(), id)
+	newAPIKey, err := repo.RegenerateAPIKey(ctx, id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to regenerate API key: %v", err)})
 		return
 	}
 
@@ -302,8 +332,10 @@ func (api *AdminAPI) regenerateAPIKey(c *gin.Context) {
 
 // healthCheck returns health status
 func (api *AdminAPI) healthCheck(c *gin.Context) {
-	// Check database connection
-	ctx := c.Request.Context()
+	// Check database connection with timeout
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+	defer cancel()
+
 	if err := api.db.Ping(ctx); err != nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"status": "unhealthy",
@@ -495,4 +527,66 @@ func parseInt(s string) (int, error) {
 	var result int
 	_, err := fmt.Sscanf(s, "%d", &result)
 	return result, err
+}
+
+// grpcProxyMiddleware handles gRPC-over-HTTP requests
+func (api *AdminAPI) grpcProxyMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Set CORS headers for gRPC-Web
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key, Authorization, grpc-timeout, grpc-accept-encoding")
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		// Validate API key for gRPC requests
+		apiKey := c.GetHeader("X-API-Key")
+		if apiKey == "" {
+			apiKey = c.GetHeader("x-api-key")
+		}
+
+		if apiKey == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "API key required for gRPC requests"})
+			c.Abort()
+			return
+		}
+
+		// Set API key in context for use in handlers
+		c.Set("apiKey", apiKey)
+
+		c.Next()
+	}
+}
+
+// grpcSingleCommand handles gRPC SingleCommand over HTTP
+func (api *AdminAPI) grpcSingleCommand(c *gin.Context) {
+	// Get API key from context
+	apiKey := c.GetString("apiKey")
+
+	// Parse request body
+	var requestBody map[string]interface{}
+	if err := c.ShouldBindJSON(&requestBody); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON request"})
+		return
+	}
+
+	// TODO: Forward this to the actual gRPC backend
+	// For now, return a placeholder response
+	c.JSON(http.StatusOK, gin.H{
+		"timestamp": fmt.Sprintf("%d", time.Now().Unix()),
+		"roomId": requestBody["room_id"],
+		"userId": requestBody["user_id"],
+		"payload": "singleCommand",
+		"message": "gRPC HTTP proxy not fully implemented - use direct gRPC connection on port 50051",
+	})
+}
+
+// grpcStream handles gRPC streaming over HTTP (WebSocket)
+func (api *AdminAPI) grpcStream(c *gin.Context) {
+	c.JSON(http.StatusNotImplemented, gin.H{
+		"error": "gRPC streaming over HTTP not implemented - use direct gRPC connection on port 50051",
+	})
 }

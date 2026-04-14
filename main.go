@@ -5,7 +5,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/chempik1234/room-service-proxy/internal/api"
@@ -38,13 +41,38 @@ func main() {
 	limiter := ratelimit.NewLimiter(cfg.RateLimitRPS, cfg.RateLimitWindow, cfg.RateLimitBurst)
 
 	// Initialize proxy service
-	proxyService := proxy.NewService(db, limiter)
+	proxyService := proxy.NewService(db, limiter, cfg)
+
+	// Setup graceful shutdown
+	setupGracefulShutdown(proxyService, db)
 
 	// Start gRPC server
 	go startGRPCServer(proxyService, cfg)
 
 	// Start admin API server
 	startAdminAPIServer(db, cfg)
+}
+
+// setupGracefulShutdown handles graceful shutdown of all services
+func setupGracefulShutdown(proxyService *proxy.Service, db *pgxpool.Pool) {
+	// Handle shutdown signals
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+
+	go func() {
+		sig := <-sigChan
+		log.Printf("Received signal: %v, initiating graceful shutdown...", sig)
+
+		// TODO: Add graceful shutdown for gRPC server
+		// TODO: Close proxy service connections
+
+		// Close database connection
+		log.Println("Closing database connection...")
+		db.Close()
+
+		log.Println("Graceful shutdown complete")
+		os.Exit(0)
+	}()
 }
 
 func startGRPCServer(proxyService *proxy.Service, cfg *config.Config) {

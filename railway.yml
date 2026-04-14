@@ -1,0 +1,33 @@
+# Railway deployment configuration
+build:
+  # Build both services
+  docker:
+    - Dockerfile.proxy
+    - Dockerfile.backend
+
+services:
+  # Service 1: HTTP Proxy (Public)
+  - name: room-service-proxy
+    type: web
+    public: true
+    ports:
+      - port: 8080
+        public: true
+        protocol: HTTP
+    env:
+      - name: PORT
+        value: "8080"
+      - name: GRPC_BACKEND_URL
+        value: ${ROOM_SERVICE_GRPC_SERVICE_URL} # Railway internal URL
+
+  # Service 2: gRPC Backend (Private)
+  - name: room-service-grpc
+    type: web
+    public: false # Only accessible via Railway private network
+    ports:
+      - port: 50051
+        public: false # Internal only
+        protocol: TCP
+    env:
+      - name: RAILWAY_PRIVATE_DOMAIN
+        value: ${RAILWAY_PRIVATE_DOMAIN}
