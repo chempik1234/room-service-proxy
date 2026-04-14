@@ -13,7 +13,6 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
@@ -258,7 +257,7 @@ func processLogEntries() {
 
 // processSingleLogEntry processes a single log entry
 func processSingleLogEntry(entry logEntry) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	// Get database connection from global service when available
