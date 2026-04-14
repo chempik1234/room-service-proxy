@@ -61,8 +61,3 @@ type = "TCP"
 [[services.volumes]]
 name = "data"
 mount_to = "/var/lib/postgresql/data"
-
-# Build configuration
-[build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
