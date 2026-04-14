@@ -1,7 +1,6 @@
-# Railway.toml - RoomService Proxy Configuration
+# Railway.toml - RoomService Proxy Configuration (Fixed)
 
 [project]
-# Project name
 name = "roomservice-proxy"
 
 # Build configuration
@@ -9,11 +8,11 @@ name = "roomservice-proxy"
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
-# Service configuration
+# Main proxy service
 [[services]]
 name = "proxy"
 
-# Environment variables (set in Railway dashboard)
+# Environment variables
 [services.config]
 DATABASE_URL = "${{Postgres.DATABASE_URL}}"
 ADMIN_API_KEY = "${{ADMIN_API_KEY}}"
@@ -28,7 +27,7 @@ ENABLE_RATE_LIMIT = "true"
 # Port configuration
 [[services.ports]]
 port = 50051
-type = "GRPC"
+type = "TCP"
 name = "grpc"
 
 [[services.ports]]
@@ -36,14 +35,25 @@ port = 8080
 type = "HTTP"
 name = "http"
 
-# Health check
+# Health check (FIXED)
 [[services.health_checks]]
 path = "/health"
-interval = "30s"
-timeout = "3s"
+method = "GET"
+target_port = 8080
+interval = "60s"        # Check every 60 seconds
+timeout = "10s"        # Give it 10 seconds
 retries = 3
+start_period = "120s"  # Give service 2 minutes to start up
 
-# Database service
+# HTTP health check (more reliable)
+[[services.health_checks]]
+command = "curl -f http://localhost:8080/health || exit 1"
+interval = "60s"
+timeout = "10s"
+retries = 3
+start_period = "120s"
+
+# PostgreSQL service
 [[services]]
 name = "postgres"
 image = "postgres:16-alpine"
