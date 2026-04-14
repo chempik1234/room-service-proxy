@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -18,9 +19,9 @@ type Config struct {
 	GRPCPort int
 
 	// Rate Limiting
-	RateLimitRPS      int           // Requests per second per tenant
-	RateLimitWindow   time.Duration // Time window for rate limiting
-	RateLimitBurst    int           // Burst size for rate limiting
+	RateLimitRPS    int           // Requests per second per tenant
+	RateLimitWindow time.Duration // Time window for rate limiting
+	RateLimitBurst  int           // Burst size for rate limiting
 
 	// Admin API
 	AdminPort   int
@@ -29,6 +30,10 @@ type Config struct {
 	// Feature flags
 	EnableAuth      bool
 	EnableRateLimit bool
+
+	// Railway config
+	RailwayToken     string
+	RailwayProjectID string
 }
 
 // Load loads configuration from environment variables
@@ -55,6 +60,10 @@ func Load() (*Config, error) {
 		// Feature flags
 		EnableAuth:      getEnvAsBool("ENABLE_AUTH", true),
 		EnableRateLimit: getEnvAsBool("ENABLE_RATE_LIMIT", true),
+
+		// Railway config
+		RailwayToken:     getEnv("RAILWAY_TOKEN", ""),
+		RailwayProjectID: getEnv("RAILWAY_PROJECT_ID", ""),
 	}
 
 	// Validate required fields
@@ -68,11 +77,11 @@ func Load() (*Config, error) {
 // Validate checks if all required configuration is present
 func (c *Config) Validate() error {
 	if c.DatabaseURL == "" {
-		return fmt.Errorf("DATABASE_URL is required")
+		return errors.New("DATABASE_URL is required")
 	}
 
 	if c.AdminAPIKey == "" {
-		return fmt.Errorf("ADMIN_API_KEY is required")
+		return errors.New("ADMIN_API_KEY is required")
 	}
 
 	if c.GRPCPort <= 0 || c.GRPCPort > 65535 {
@@ -84,7 +93,15 @@ func (c *Config) Validate() error {
 	}
 
 	if c.RateLimitRPS <= 0 {
-		return fmt.Errorf("RATE_LIMIT_RPS must be positive")
+		return errors.New("RATE_LIMIT_RPS must be positive")
+	}
+
+	if c.RailwayToken == "" {
+		return errors.New("RAILWAY_TOKEN is required")
+	}
+
+	if c.RailwayProjectID == "" {
+		return errors.New("RAILWAY_PROJECT_ID is required")
 	}
 
 	return nil

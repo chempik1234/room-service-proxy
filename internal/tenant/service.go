@@ -3,6 +3,7 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,17 +17,19 @@ type Service struct {
 
 // RailwayService handles Railway API calls
 type RailwayService struct {
-	Token    string
-	BaseURL  string
+	Token     string
+	BaseURL   string
+	ProjectID string
 }
 
 // NewService creates a new tenant service
-func NewService(db *pgxpool.Pool, railwayToken string) *Service {
+func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string) *Service {
 	return &Service{
 		db: db,
 		rly: &RailwayService{
-			Token:   railwayToken,
-			BaseURL: "https://backboard.railway.app/graphql/v2",
+			Token:     railwayToken,
+			BaseURL:   "https://backboard.railway.app/graphql/v2",
+			ProjectID: railwayProjectID,
 		},
 	}
 }
@@ -74,10 +77,13 @@ func (s *Service) provisionRailwayProject(ctx context.Context, tenant *Tenant) (
 	redisPassword := generateRandomPassword(32)
 
 	// Create Railway project
-	projectID, err := s.rly.CreateProject(tenant.ID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create project: %w", err)
-	}
+	projectID := s.rly.ProjectID
+	/*
+		projectID, err := s.rly.CreateProject(tenant.ID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create project: %w", err)
+		}
+	*/
 
 	// Create MongoDB service with random password
 	mongoURL, err := s.rly.CreateMongoDB(projectID, tenant.ID, mongoPassword)
@@ -85,11 +91,15 @@ func (s *Service) provisionRailwayProject(ctx context.Context, tenant *Tenant) (
 		return nil, fmt.Errorf("failed to create MongoDB: %w", err)
 	}
 
+	log.Println("- created new mongo DB for tenant", tenant.ID)
+
 	// Create Redis service with random password
 	redisURL, err := s.rly.CreateRedis(projectID, tenant.ID, redisPassword)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Redis: %w", err)
 	}
+
+	log.Println("- created new Redis for tenant", tenant.ID)
 
 	// Create RoomService service
 	rsService, err := s.rly.CreateRoomService(projectID, tenant.ID, mongoURL, redisURL)
@@ -97,19 +107,23 @@ func (s *Service) provisionRailwayProject(ctx context.Context, tenant *Tenant) (
 		return nil, fmt.Errorf("failed to create RoomService: %w", err)
 	}
 
+	log.Println("- created new RoomService for tenant", tenant.ID)
+
 	// Wait for services to be ready
 	if err := s.waitForRailwayServices(ctx, projectID); err != nil {
 		return nil, fmt.Errorf("services not ready: %w", err)
 	}
 
+	log.Println("Tenant provisioned!", tenant.ID)
+
 	return &RailwayProject{
-		ProjectID:   projectID,
-		Host:        rsService.Host,
-		Port:        rsService.Port,
-		MongoURL:    mongoURL,
-		RedisURL:    redisURL,
-		MongoPass:   mongoPassword,
-		RedisPass:   redisPassword,
+		ProjectID: projectID,
+		Host:      rsService.Host,
+		Port:      rsService.Port,
+		MongoURL:  mongoURL,
+		RedisURL:  redisURL,
+		MongoPass: mongoPassword,
+		RedisPass: redisPassword,
 	}, nil
 }
 

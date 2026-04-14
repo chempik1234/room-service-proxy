@@ -23,11 +23,11 @@ type AdminAPI struct {
 }
 
 // NewAdminAPI creates a new admin API
-func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string) *AdminAPI {
+func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string, railwayToken string, railwayProjectID string) *AdminAPI {
 	return &AdminAPI{
 		db:          db,
 		adminAPIKey: adminAPIKey,
-		tenantSvc:   tenant.NewService(db, ""), // Railway token set separately
+		tenantSvc:   tenant.NewService(db, railwayToken, railwayProjectID), // Railway token set separately
 		authAPI:     NewAuthAPI(db),
 	}
 }
@@ -69,12 +69,14 @@ func SetupRoutes(api *AdminAPI) *gin.Engine {
 	router.GET("/status", api.status)
 
 	// gRPC proxy endpoint (for Railway compatibility)
+	/* TODO: what's with these?
 	apiGRPC := router.Group("/grpc")
 	apiGRPC.Use(api.grpcProxyMiddleware())
 	{
 		apiGRPC.POST("/command", api.grpcSingleCommand)
 		apiGRPC.POST("/stream", api.grpcStream)
 	}
+	*/
 
 	return router
 }
@@ -529,6 +531,8 @@ func parseInt(s string) (int, error) {
 	return result, err
 }
 
+/* TODO: what's with these?
+
 // grpcProxyMiddleware handles gRPC-over-HTTP requests
 func (api *AdminAPI) grpcProxyMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -590,3 +594,5 @@ func (api *AdminAPI) grpcStream(c *gin.Context) {
 		"error": "gRPC streaming over HTTP not implemented - use direct gRPC connection on port 50051",
 	})
 }
+
+*/

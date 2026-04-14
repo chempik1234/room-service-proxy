@@ -99,7 +99,7 @@ func startGRPCServer(proxyService *proxy.Service, cfg *config.Config) {
 }
 
 func startAdminAPIServer(db *pgxpool.Pool, cfg *config.Config) {
-	adminAPI := api.NewAdminAPI(db, cfg.AdminAPIKey)
+	adminAPI := api.NewAdminAPI(db, cfg.AdminAPIKey, cfg.RailwayToken, cfg.RailwayProjectID)
 
 	router := api.SetupRoutes(adminAPI)
 
