@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/chempik1234/room-service-proxy/internal/tenant"
@@ -422,7 +423,7 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 		}
 	}
 
-	var rows *pgx.Rows
+	var rows pgx.Rows
 	var err error
 
 	// Check if user is admin or regular user
