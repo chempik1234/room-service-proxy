@@ -164,14 +164,11 @@ func (api *AdminAPI) createTenant(c *gin.Context) {
 func (api *AdminAPI) listTenants(c *gin.Context) {
 	repo := tenant.NewRepository(api.db)
 
-	var tenants interface{}
-	var err error
-
 	// Check if user is admin or regular user
 	authType := c.GetString("authType")
 	if authType == "admin" {
 		// Admin can see all tenants
-		tenants, err = repo.List(c.Request.Context())
+		tenants, err := repo.List(c.Request.Context())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -179,12 +176,12 @@ func (api *AdminAPI) listTenants(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{
 			"tenants": tenants,
-			"count":   len(tenants.([]tenant.Tenant)),
+			"count":   len(tenants),
 		})
 	} else {
 		// Regular user can only see their own tenants
 		user := c.MustGet("user").(*User)
-		tenants, err = repo.ListByUserID(c.Request.Context(), user.ID)
+		tenants, err := repo.ListByUserID(c.Request.Context(), user.ID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -192,7 +189,7 @@ func (api *AdminAPI) listTenants(c *gin.Context) {
 
 		c.JSON(http.StatusOK, gin.H{
 			"tenants": tenants,
-			"count":   len(tenants.([]tenant.Tenant)),
+			"count":   len(tenants),
 		})
 	}
 }
