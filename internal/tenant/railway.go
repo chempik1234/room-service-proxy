@@ -17,7 +17,6 @@ var (
 	ErrServiceCreate = fmt.Errorf("railway service create failed")
 	ErrServiceDelete = fmt.Errorf("railway service delete failed")
 	ErrProjectDelete = fmt.Errorf("railway project delete failed")
-	ErrServiceDeploy = fmt.Errorf("railway service deploy failed")
 	ErrServiceURL    = fmt.Errorf("railway service URL fetch failed")
 	ErrAPIRequest    = fmt.Errorf("railway API request failed")
 	ErrHealthCheck   = fmt.Errorf("railway health check failed")
@@ -241,20 +240,7 @@ func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisU
 		return nil, fmt.Errorf("%w: %w", ErrServiceURL, err)
 	}
 
-	// Step 3: Deploy service with retry
-	err = utils.RetryWithBackoff(ctx, 3, 2*time.Second, func() error {
-		if err := r.deployService(projectID, serviceID); err != nil {
-			return fmt.Errorf("%w: %w", ErrServiceDeploy, err)
-		}
-		return nil
-	})
-
-	if err != nil {
-		// Clean up the created service since deploy failed
-		_ = r.DeleteService(serviceID)
-		return nil, fmt.Errorf("failed to deploy service after retries: %w", err)
-	}
-
+	// Railway automatically deploys when service is created and env vars are set
 	return &RoomServiceInfo{
 		ServiceID: serviceID,
 		Host:      host,
@@ -424,17 +410,4 @@ func (r *RailwayService) setEnvironmentVariables(serviceID string, vars map[stri
 	}
 
 	return nil
-}
-
-func (r *RailwayService) deployService(projectID, serviceID string) error {
-	payload := map[string]interface{}{
-		"query": fmt.Sprintf(`
-			mutation {
-				serviceRestart(services: ["%s"])
-			}
-		`, serviceID),
-	}
-
-	_, err := r.makeRequest(payload)
-	return err
 }
