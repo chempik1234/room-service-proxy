@@ -20,21 +20,23 @@ type Service struct {
 
 // RailwayService handles Railway API calls
 type RailwayService struct {
-	Token     string
-	BaseURL   string
-	ProjectID string
-	client    *http.Client
+	Token         string
+	BaseURL       string
+	ProjectID     string
+	EnvironmentID string
+	client        *http.Client
 }
 
 // NewService creates a new tenant service
-func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string) *Service {
+func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string, railwayEnvironmentID string) *Service {
 	service := &Service{
 		db: db,
 		rly: &RailwayService{
-			Token:     railwayToken,
-			BaseURL:   "https://backboard.railway.app/graphql/v2",
-			ProjectID: railwayProjectID,
-			client:    &http.Client{Timeout: 30 * time.Second},
+			Token:         railwayToken,
+			BaseURL:       "https://backboard.railway.app/graphql/v2",
+			ProjectID:     railwayProjectID,
+			EnvironmentID: railwayEnvironmentID,
+			client:        &http.Client{Timeout: 30 * time.Second},
 		},
 		provisioningQueue: make(chan *Tenant, 100),
 	}

@@ -57,7 +57,7 @@ func main() {
 	proxyService := service.NewService(db, limiter, cfg)
 
 	// Initialize tenant service
-	tenantService := tenant.NewService(db, cfg.RailwayToken, cfg.RailwayProjectID)
+	tenantService := tenant.NewService(db, cfg.RailwayToken, cfg.RailwayProjectID, cfg.RailwayEnvironmentID)
 
 	// Setup graceful shutdown
 	setupGracefulShutdown(db, ctx)
@@ -113,7 +113,7 @@ func startGRPCServer(proxyService *service.Service, cfg *config.Config, ctx cont
 
 // startAdminAPIServer starts the HTTP admin API server
 func startAdminAPIServer(db *pgxpool.Pool, cfg *config.Config, tenantService *tenant.Service, ctx context.Context) {
-	adminAPI := transportHttp.NewAdminAPI(db, cfg.AdminAPIKey, cfg.RailwayToken, cfg.RailwayProjectID)
+	adminAPI := transportHttp.NewAdminAPI(db, cfg.AdminAPIKey, cfg.RailwayToken, cfg.RailwayProjectID, cfg.RailwayEnvironmentID)
 	router := transportHttp.SetupRoutes(adminAPI)
 
 	server := &http.Server{

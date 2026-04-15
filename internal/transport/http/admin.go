@@ -23,11 +23,11 @@ type AdminAPI struct {
 }
 
 // NewAdminAPI creates a new admin API
-func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string, railwayToken string, railwayProjectID string) *AdminAPI {
+func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string, railwayToken string, railwayProjectID string, railwayEnvironmentID string) *AdminAPI {
 	return &AdminAPI{
 		db:          db,
 		adminAPIKey: adminAPIKey,
-		tenantSvc:   tenant.NewService(db, railwayToken, railwayProjectID), // Railway token set separately
+		tenantSvc:   tenant.NewService(db, railwayToken, railwayProjectID, railwayEnvironmentID), // Railway config set separately
 		authAPI:     NewAuthAPI(db),
 	}
 }

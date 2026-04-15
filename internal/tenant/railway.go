@@ -411,8 +411,10 @@ func (r *RailwayService) setEnvironmentVariables(serviceID string, vars map[stri
 		`,
 		"variables": map[string]interface{}{
 			"input": map[string]interface{}{
-				"serviceId": serviceID,
-				"variables": vars,
+				"projectId":     r.ProjectID,
+				"environmentId": r.EnvironmentID,
+				"serviceId":     serviceID,
+				"variables":     vars,
 			},
 		},
 	}

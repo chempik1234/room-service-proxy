@@ -32,8 +32,9 @@ type Config struct {
 	EnableRateLimit bool
 
 	// Railway config
-	RailwayToken     string
-	RailwayProjectID string
+	RailwayToken        string
+	RailwayProjectID    string
+	RailwayEnvironmentID string
 }
 
 // Load loads configuration from environment variables
@@ -62,8 +63,9 @@ func Load() (*Config, error) {
 		EnableRateLimit: getEnvAsBool("ENABLE_RATE_LIMIT", true),
 
 		// Railway config
-		RailwayToken:     getEnv("RAILWAY_TOKEN", ""),
-		RailwayProjectID: getEnv("RAILWAY_PROJECT_ID", ""),
+		RailwayToken:        getEnv("RAILWAY_TOKEN", ""),
+		RailwayProjectID:    getEnv("RAILWAY_PROJECT_ID", ""),
+		RailwayEnvironmentID: getEnv("RAILWAY_ENVIRONMENT_ID", ""),
 	}
 
 	// Validate required fields
@@ -102,6 +104,10 @@ func (c *Config) Validate() error {
 
 	if c.RailwayProjectID == "" {
 		return errors.New("RAILWAY_PROJECT_ID is required")
+	}
+
+	if c.RailwayEnvironmentID == "" {
+		return errors.New("RAILWAY_ENVIRONMENT_ID is required")
 	}
 
 	return nil
