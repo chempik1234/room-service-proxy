@@ -23,13 +23,19 @@ type AdminAPI struct {
 }
 
 // NewAdminAPI creates a new admin API
-func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string, railwayToken string, railwayProjectID string, railwayEnvironmentID string) *AdminAPI {
+func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string, railwayToken string, railwayProjectID string, railwayEnvironmentID string) (*AdminAPI, error) {
+	// Create tenant service with Railway configuration
+	tenantSvc, err := tenant.NewService(db, railwayToken, railwayProjectID, railwayEnvironmentID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tenant service: %w", err)
+	}
+
 	return &AdminAPI{
 		db:          db,
 		adminAPIKey: adminAPIKey,
-		tenantSvc:   tenant.NewService(db, railwayToken, railwayProjectID, railwayEnvironmentID), // Railway config set separately
+		tenantSvc:   tenantSvc,
 		authAPI:     NewAuthAPI(db),
-	}
+	}, nil
 }
 
 // SetupRoutes configures all API routes

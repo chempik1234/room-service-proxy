@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chempik1234/room-service-proxy/pkg/utils"
+	"github.com/chempik1234/room-service-proxy/internal/dto"
 )
 
 // RailwayServiceDeployer implements ServiceDeployer using Railway's infrastructure
@@ -32,17 +32,17 @@ func NewRailwayServiceDeployer(token, projectID, environmentID string) *RailwayS
 }
 
 // DeployDatabase deploys MongoDB on Railway
-func (r *RailwayServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (DatabaseDeployment, error) {
+func (r *RailwayServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error) {
 	password := generateRandomPassword(32)
 	mongoURL, err := r.rly.CreateMongoDB(r.rly.ProjectID, tenantID, password)
 	if err != nil {
-		return DatabaseDeployment{}, fmt.Errorf("failed to deploy MongoDB: %w", err)
+		return dto.DatabaseDeployment{}, fmt.Errorf("failed to deploy MongoDB: %w", err)
 	}
 
 	host := extractHostFromURL(mongoURL)
 	port := 27071 // Default Railway MongoDB port
 
-	return DatabaseDeployment{
+	return dto.DatabaseDeployment{
 		ConnectionString: mongoURL,
 		Host:            host,
 		Port:            port,
@@ -54,17 +54,17 @@ func (r *RailwayServiceDeployer) DeployDatabase(ctx context.Context, tenantID st
 }
 
 // DeployCache deploys Redis on Railway
-func (r *RailwayServiceDeployer) DeployCache(ctx context.Context, tenantID string) (CacheDeployment, error) {
+func (r *RailwayServiceDeployer) DeployCache(ctx context.Context, tenantID string) (dto.CacheDeployment, error) {
 	password := generateRandomPassword(32)
 	redisURL, err := r.rly.CreateRedis(r.rly.ProjectID, tenantID, password)
 	if err != nil {
-		return CacheDeployment{}, fmt.Errorf("failed to deploy Redis: %w", err)
+		return dto.CacheDeployment{}, fmt.Errorf("failed to deploy Redis: %w", err)
 	}
 
 	host := extractHostFromURL(redisURL)
 	port := 6379 // Default Railway Redis port
 
-	return CacheDeployment{
+	return dto.CacheDeployment{
 		ConnectionString: redisURL,
 		Host:            host,
 		Port:            port,
@@ -75,16 +75,16 @@ func (r *RailwayServiceDeployer) DeployCache(ctx context.Context, tenantID strin
 }
 
 // DeployApplication deploys RoomService on Railway
-func (r *RailwayServiceDeployer) DeployApplication(ctx context.Context, tenantID string, config ApplicationConfig) (ApplicationDeployment, error) {
+func (r *RailwayServiceDeployer) DeployApplication(ctx context.Context, tenantID string, config dto.ApplicationConfig) (dto.ApplicationDeployment, error) {
 	// Get existing database and cache URLs first
 	mongoDeployment, err := r.DeployDatabase(ctx, tenantID)
 	if err != nil {
-		return ApplicationDeployment{}, fmt.Errorf("failed to get database: %w", err)
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to get database: %w", err)
 	}
 
 	cacheDeployment, err := r.DeployCache(ctx, tenantID)
 	if err != nil {
-		return ApplicationDeployment{}, fmt.Errorf("failed to get cache: %w", err)
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to get cache: %w", err)
 	}
 
 	// Create RoomService with proper environment variables
@@ -95,10 +95,10 @@ func (r *RailwayServiceDeployer) DeployApplication(ctx context.Context, tenantID
 		cacheDeployment.ConnectionString,
 	)
 	if err != nil {
-		return ApplicationDeployment{}, fmt.Errorf("failed to deploy RoomService: %w", err)
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to deploy RoomService: %w", err)
 	}
 
-	return ApplicationDeployment{
+	return dto.ApplicationDeployment{
 		Endpoint: fmt.Sprintf("%s:%d", rsService.Host, rsService.Port),
 		Host:     rsService.Host,
 		Port:     rsService.Port,
@@ -133,7 +133,7 @@ func (r *RailwayServiceDeployer) DeleteServices(ctx context.Context, tenantID st
 }
 
 // GetStatus returns the current status of Railway services for a tenant
-func (r *RailwayServiceDeployer) GetStatus(ctx context.Context, tenantID string) (DeploymentStatus, error) {
+func (r *RailwayServiceDeployer) GetStatus(ctx context.Context, tenantID string) (dto.DeploymentStatus, error) {
 	payload := map[string]interface{}{
 		"query": fmt.Sprintf(`
 			{
@@ -162,7 +162,7 @@ func (r *RailwayServiceDeployer) GetStatus(ctx context.Context, tenantID string)
 
 	resp, err := r.rly.makeRequest(payload)
 	if err != nil {
-		return DeploymentStatus{}, fmt.Errorf("failed to get services: %w", err)
+		return dto.DeploymentStatus{}, fmt.Errorf("failed to get services: %w", err)
 	}
 
 	var result struct {
@@ -190,11 +190,11 @@ func (r *RailwayServiceDeployer) GetStatus(ctx context.Context, tenantID string)
 	}
 
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return DeploymentStatus{}, fmt.Errorf("failed to parse response: %w", err)
+		return dto.DeploymentStatus{}, fmt.Errorf("failed to parse response: %w", err)
 	}
 
 	// Filter services for this tenant and build status
-	var serviceStatuses []ServiceStatus
+	var serviceStatuses []dto.ServiceStatus
 	allHealthy := true
 	provisioningStatus := "healthy"
 
@@ -226,7 +226,7 @@ func (r *RailwayServiceDeployer) GetStatus(ctx context.Context, tenantID string)
 			provisioningStatus = "deploying"
 		}
 
-		serviceStatuses = append(serviceStatuses, ServiceStatus{
+		serviceStatuses = append(serviceStatuses, dto.ServiceStatus{
 			Name:    edge.Node.Name,
 			Type:    serviceType,
 			Healthy: healthy,
@@ -235,7 +235,7 @@ func (r *RailwayServiceDeployer) GetStatus(ctx context.Context, tenantID string)
 	}
 
 	if len(serviceStatuses) == 0 {
-		return DeploymentStatus{
+		return dto.DeploymentStatus{
 			TenantID:     tenantID,
 			Healthy:      false,
 			Services:     serviceStatuses,
@@ -245,7 +245,7 @@ func (r *RailwayServiceDeployer) GetStatus(ctx context.Context, tenantID string)
 		}, nil
 	}
 
-	return DeploymentStatus{
+	return dto.DeploymentStatus{
 		TenantID:     tenantID,
 		Healthy:      allHealthy,
 		Services:     serviceStatuses,

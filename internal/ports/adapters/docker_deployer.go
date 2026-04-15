@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/chempik1234/room-service-proxy/internal/ports"
+	"github.com/chempik1234/room-service-proxy/internal/dto"
 )
 
 // DockerServiceDeployer implements ServiceDeployer using local Docker
@@ -43,13 +43,13 @@ func NewDockerServiceDeployer() *DockerServiceDeployer {
 }
 
 // DeployDatabase deploys MongoDB using Docker
-func (d *DockerServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (ports.DatabaseDeployment, error) {
+func (d *DockerServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error) {
 	serviceName := fmt.Sprintf("%s-mongo", tenantID)
 	password := generateRandomPassword(32)
 
 	// Check if already exists
 	if existing, exists := d.deployedServices[serviceName]; exists {
-		return ports.DatabaseDeployment{
+		return dto.DatabaseDeployment{
 			ConnectionString: fmt.Sprintf("mongodb://admin:%s@%s:%d", existing.Password, existing.Host, existing.Port),
 			Host:            existing.Host,
 			Port:            existing.Port,
@@ -77,7 +77,7 @@ func (d *DockerServiceDeployer) DeployDatabase(ctx context.Context, tenantID str
 
 	d.deployedServices[serviceName] = service
 
-	return ports.DatabaseDeployment{
+	return dto.DatabaseDeployment{
 		ConnectionString: fmt.Sprintf("mongodb://admin:%s@localhost:%d", password, port),
 		Host:            "localhost",
 		Port:            port,
@@ -89,13 +89,13 @@ func (d *DockerServiceDeployer) DeployDatabase(ctx context.Context, tenantID str
 }
 
 // DeployCache deploys Redis using Docker
-func (d *DockerServiceDeployer) DeployCache(ctx context.Context, tenantID string) (ports.CacheDeployment, error) {
+func (d *DockerServiceDeployer) DeployCache(ctx context.Context, tenantID string) (dto.CacheDeployment, error) {
 	serviceName := fmt.Sprintf("%s-redis", tenantID)
 	password := generateRandomPassword(32)
 
 	// Check if already exists
 	if existing, exists := d.deployedServices[serviceName]; exists {
-		return ports.CacheDeployment{
+		return dto.CacheDeployment{
 			ConnectionString: fmt.Sprintf("redis://:%s@%s:%d/%d", existing.Password, existing.Host, existing.Port, 0),
 			Host:            existing.Host,
 			Port:            existing.Port,
@@ -121,7 +121,7 @@ func (d *DockerServiceDeployer) DeployCache(ctx context.Context, tenantID string
 
 	d.deployedServices[serviceName] = service
 
-	return ports.CacheDeployment{
+	return dto.CacheDeployment{
 		ConnectionString: fmt.Sprintf("redis://:%s@localhost:%d/%d", password, port, 0),
 		Host:            "localhost",
 		Port:            port,
@@ -132,12 +132,12 @@ func (d *DockerServiceDeployer) DeployCache(ctx context.Context, tenantID string
 }
 
 // DeployApplication deploys RoomService using Docker
-func (d *DockerServiceDeployer) DeployApplication(ctx context.Context, tenantID string, config ports.ApplicationConfig) (ports.ApplicationDeployment, error) {
+func (d *DockerServiceDeployer) DeployApplication(ctx context.Context, tenantID string, config dto.ApplicationConfig) (dto.ApplicationDeployment, error) {
 	serviceName := tenantID
 
 	// Check if already exists
 	if existing, exists := d.deployedServices[serviceName]; exists {
-		return ports.ApplicationDeployment{
+		return dto.ApplicationDeployment{
 			Endpoint: fmt.Sprintf("%s:%d", existing.Host, existing.Port),
 			Host:     existing.Host,
 			Port:     existing.Port,
@@ -160,7 +160,7 @@ func (d *DockerServiceDeployer) DeployApplication(ctx context.Context, tenantID 
 
 	d.deployedServices[serviceName] = service
 
-	return ports.ApplicationDeployment{
+	return dto.ApplicationDeployment{
 		Endpoint: fmt.Sprintf("localhost:%d", port),
 		Host:     "localhost",
 		Port:     port,
@@ -208,21 +208,21 @@ func (d *DockerServiceDeployer) DeleteServices(ctx context.Context, tenantID str
 }
 
 // GetStatus returns the current status of tenant services
-func (d *DockerServiceDeployer) GetStatus(ctx context.Context, tenantID string) (DeploymentStatus, error) {
+func (d *DockerServiceDeployer) GetStatus(ctx context.Context, tenantID string) (dto.DeploymentStatus, error) {
 	services := []string{
 		fmt.Sprintf("%s-mongo", tenantID),
 		fmt.Sprintf("%s-redis", tenantID),
 		tenantID,
 	}
 
-	var serviceStatuses []ServiceStatus
+	var serviceStatuses []dto.ServiceStatus
 	allHealthy := true
 
 	for _, serviceName := range services {
 		service, exists := d.deployedServices[serviceName]
 		if !exists {
 			allHealthy = false
-			serviceStatuses = append(serviceStatuses, ports.ServiceStatus{
+			serviceStatuses = append(serviceStatuses, dto.ServiceStatus{
 				Name:    serviceName,
 				Type:    "unknown",
 				Healthy: false,
@@ -246,7 +246,7 @@ func (d *DockerServiceDeployer) GetStatus(ctx context.Context, tenantID string) 
 			}
 		}
 
-		serviceStatuses = append(serviceStatuses, ports.ServiceStatus{
+		serviceStatuses = append(serviceStatuses, dto.ServiceStatus{
 			Name:    serviceName,
 			Type:    serviceType,
 			Healthy: healthy,
@@ -254,7 +254,7 @@ func (d *DockerServiceDeployer) GetStatus(ctx context.Context, tenantID string) 
 		})
 	}
 
-	return ports.DeploymentStatus{
+	return dto.DeploymentStatus{
 		TenantID:     tenantID,
 		Healthy:      allHealthy,
 		Services:     serviceStatuses,

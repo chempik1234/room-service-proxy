@@ -1,4 +1,4 @@
-package tenant
+package adapters
 
 import (
 	"bytes"
@@ -12,6 +12,15 @@ import (
 
 	"github.com/chempik1234/room-service-proxy/pkg/utils"
 )
+
+// RailwayService handles Railway API calls
+type RailwayService struct {
+	Token         string
+	BaseURL       string
+	ProjectID     string
+	EnvironmentID string
+	client        *http.Client
+}
 
 // Standard error types for Railway operations
 var (

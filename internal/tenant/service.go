@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
-	"strings"
 	"time"
 
+	"github.com/chempik1234/room-service-proxy/internal/dto"
 	"github.com/chempik1234/room-service-proxy/internal/ports"
+	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -16,24 +16,18 @@ import (
 type Service struct {
 	db                *pgxpool.Pool
 	deployer          ports.ServiceDeployer // Service deployment port
-	provisioningQueue chan *Tenant           // Queue for async provisioning
+	provisioningQueue chan *Tenant          // Queue for async provisioning
 }
 
-// RailwayService handles Railway API calls
-type RailwayService struct {
-	Token         string
-	BaseURL       string
-	ProjectID     string
-	EnvironmentID string
-	client        *http.Client
-}
-
-// NewService creates a new tenant service with the appropriate deployer
-func NewService(db *pgxpool.Pool) (*Service, error) {
-	// Use factory to create deployer based on environment
-	deployer, err := ports.NewServiceDeployer()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create service deployer: %w", err)
+// NewService creates a new tenant service with Railway configuration
+func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string, railwayEnvironmentID string) (*Service, error) {
+	// Create Railway deployer with provided credentials
+	var deployer ports.ServiceDeployer
+	if railwayToken != "" && railwayProjectID != "" && railwayEnvironmentID != "" {
+		deployer = adapters.NewRailwayServiceDeployer(railwayToken, railwayProjectID, railwayEnvironmentID)
+	} else {
+		// Fall back to Docker for local development
+		deployer = adapters.NewDockerServiceDeployer()
 	}
 
 	service := &Service{
@@ -70,18 +64,18 @@ func (s *Service) CreateTenantWithProvisioning(ctx context.Context, req *CreateT
 		return nil, fmt.Errorf("failed to create tenant: %w", err)
 	}
 
-	// Provision Railway services
-	if s.rly != nil && s.rly.Token != "" {
-		railwayProject, err := s.provisionRailwayProject(ctx, tenant)
+	// Provision tenant services
+	if s.deployer != nil {
+		provisionedProject, err := s.provisionTenantServices(ctx, tenant)
 		if err != nil {
 			// Rollback tenant creation
 			repo.Delete(ctx, tenant.ID)
-			return nil, fmt.Errorf("failed to provision Railway project: %w", err)
+			return nil, fmt.Errorf("failed to provision tenant services: %w", err)
 		}
 
-		// Update tenant with Railway info
-		tenant.Host = railwayProject.Host
-		tenant.Port = railwayProject.Port
+		// Update tenant with service info
+		tenant.Host = provisionedProject.Host
+		tenant.Port = provisionedProject.Port
 
 		if err := repo.Update(ctx, tenant); err != nil {
 			return nil, fmt.Errorf("failed to update tenant: %w", err)
@@ -129,9 +123,9 @@ func (s *Service) provisioningWorker() {
 		// Update status to creating_services
 		s.updateTenantStatus(tenant.ID, "creating_services", "")
 
-		// Provision Railway services
+		// Provision tenant services
 		ctx := context.Background()
-		railwayProject, err := s.provisionRailwayProject(ctx, tenant)
+		provisionedProject, err := s.provisionTenantServices(ctx, tenant)
 
 		if err != nil {
 			// Update tenant with failed status
@@ -140,10 +134,10 @@ func (s *Service) provisioningWorker() {
 			continue
 		}
 
-		// Update tenant with Railway info
+		// Update tenant with service info
 		repo := NewRepository(s.db)
-		tenant.Host = railwayProject.Host
-		tenant.Port = railwayProject.Port
+		tenant.Host = provisionedProject.Host
+		tenant.Port = provisionedProject.Port
 		tenant.Status = "active"
 		tenant.ProvisioningStatus = "ready"
 		tenant.ProvisioningError = ""
@@ -200,93 +194,65 @@ func (s *Service) GetTenantProvisioningStatus(ctx context.Context, tenantID stri
 	}, nil
 }
 
-// provisionRailwayProject provisions a complete Railway project for a tenant
-func (s *Service) provisionRailwayProject(ctx context.Context, tenant *Tenant) (*RailwayProject, error) {
-	// Generate random passwords for databases
-	mongoPassword := generateRandomPassword(32)
-	redisPassword := generateRandomPassword(32)
-
-	// Track created resources for idempotent cleanup
-	var mongoServiceID, redisServiceID, roomServiceID string
-
-	// Create Railway project
-	projectID := s.rly.ProjectID
-
-	// Create MongoDB service with random password
-	mongoURL, err := s.rly.CreateMongoDB(projectID, tenant.ID, mongoPassword)
+// provisionTenantServices provisions a complete project for a tenant using the configured deployer
+func (s *Service) provisionTenantServices(ctx context.Context, tenant *Tenant) (*ProvisionedProject, error) {
+	// Deploy database
+	mongoDeployment, err := s.deployer.DeployDatabase(ctx, tenant.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create MongoDB: %w", err)
+		return nil, fmt.Errorf("failed to deploy database: %w", err)
 	}
-	// Extract service ID from URL for cleanup (format: <serviceID>.railway.internal)
-	mongoServiceID = extractServiceIDFromURL(mongoURL)
+	log.Println("- deployed database for tenant", tenant.ID)
 
-	log.Println("- created new mongo DB for tenant", tenant.ID)
-
-	// Create Redis service with random password
-	redisURL, err := s.rly.CreateRedis(projectID, tenant.ID, redisPassword)
+	// Deploy cache
+	redisDeployment, err := s.deployer.DeployCache(ctx, tenant.ID)
 	if err != nil {
-		// Idempotent cleanup: delete MongoDB service
-		log.Printf("ERROR: Failed to create Redis, attempting cleanup for tenant %s", tenant.ID)
-		if mongoServiceID != "" {
-			s.rly.DeleteService(mongoServiceID)
-		}
-		return nil, fmt.Errorf("failed to create Redis: %w", err)
+		// Idempotent cleanup: delete database
+		log.Printf("ERROR: Failed to deploy cache, attempting cleanup for tenant %s", tenant.ID)
+		s.deployer.DeleteServices(ctx, tenant.ID)
+		return nil, fmt.Errorf("failed to deploy cache: %w", err)
 	}
-	// Extract service ID from URL for cleanup
-	redisServiceID = extractServiceIDFromURL(redisURL)
+	log.Println("- deployed cache for tenant", tenant.ID)
 
-	log.Println("- created new Redis for tenant", tenant.ID)
-
-	// Create RoomService service
-	rsService, err := s.rly.CreateRoomService(projectID, tenant.ID, mongoURL, redisURL)
+	// Deploy application
+	appConfig := dto.ApplicationConfig{
+		Environment: map[string]string{
+			"MONGO_URL": mongoDeployment.ConnectionString,
+			"REDIS_URL": redisDeployment.ConnectionString,
+		},
+	}
+	appDeployment, err := s.deployer.DeployApplication(ctx, tenant.ID, appConfig)
 	if err != nil {
-		// Idempotent cleanup: delete Redis and MongoDB services
-		log.Printf("ERROR: Failed to create RoomService, attempting cleanup for tenant %s", tenant.ID)
-		if redisServiceID != "" {
-			s.rly.DeleteService(redisServiceID)
-		}
-		if mongoServiceID != "" {
-			s.rly.DeleteService(mongoServiceID)
-		}
-		return nil, fmt.Errorf("failed to create RoomService: %w", err)
+		// Idempotent cleanup: delete cache and database
+		log.Printf("ERROR: Failed to deploy application, attempting cleanup for tenant %s", tenant.ID)
+		s.deployer.DeleteServices(ctx, tenant.ID)
+		return nil, fmt.Errorf("failed to deploy application: %w", err)
 	}
-	roomServiceID = rsService.ServiceID
-
-	log.Println("- created new RoomService for tenant", tenant.ID)
+	log.Println("- deployed application for tenant", tenant.ID)
 
 	// Wait for services to be ready
-	if err := s.waitForRailwayServices(ctx, projectID, tenant.ID); err != nil {
+	if err := s.waitForTenantServices(ctx, tenant.ID); err != nil {
 		// Idempotent cleanup: delete all services
 		log.Printf("ERROR: Services not ready, attempting cleanup for tenant %s", tenant.ID)
-		if roomServiceID != "" {
-			s.rly.DeleteService(roomServiceID)
-		}
-		if redisServiceID != "" {
-			s.rly.DeleteService(redisServiceID)
-		}
-		if mongoServiceID != "" {
-			s.rly.DeleteService(mongoServiceID)
-		}
+		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("services not ready: %w", err)
 	}
 
 	log.Println("Tenant provisioned!", tenant.ID)
 
-	return &RailwayProject{
-		ProjectID: projectID,
-		Host:      rsService.Host,
-		Port:      rsService.Port,
-		MongoURL:  mongoURL,
-		RedisURL:  redisURL,
-		MongoPass: mongoPassword,
-		RedisPass: redisPassword,
+	return &ProvisionedProject{
+		Host:      appDeployment.Host,
+		Port:      appDeployment.Port,
+		MongoURL:  mongoDeployment.ConnectionString,
+		RedisURL:  redisDeployment.ConnectionString,
+		MongoPass: mongoDeployment.Password,
+		RedisPass: redisDeployment.Password,
 	}, nil
 }
 
-// waitForRailwayServices waits for Railway services to be ready
-func (s *Service) waitForRailwayServices(ctx context.Context, projectID string, tenantID string) error {
-	// Give services time to initialize - Railway can take 30-60 seconds
-	log.Println("Waiting for Railway services to initialize...")
+// waitForTenantServices waits for tenant services to be ready using the configured deployer
+func (s *Service) waitForTenantServices(ctx context.Context, tenantID string) error {
+	// Give services time to initialize - can take 30-60 seconds
+	log.Println("Waiting for services to initialize...")
 	time.Sleep(30 * time.Second)
 
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -296,26 +262,26 @@ func (s *Service) waitForRailwayServices(ctx context.Context, projectID string, 
 	defer ticker.Stop()
 
 	// First check immediately after initial delay
-	healthy, err := s.rly.CheckTenantServicesHealth(ctx, projectID, tenantID)
+	healthy, err := s.deployer.CheckHealth(ctx, tenantID)
 	if err == nil && healthy {
-		log.Printf("All Railway services for tenant %s are healthy!", tenantID)
+		log.Printf("All services for tenant %s are healthy!", tenantID)
 		return nil
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for Railway services to be ready for tenant %s", tenantID)
+			return fmt.Errorf("timeout waiting for services to be ready for tenant %s", tenantID)
 		case <-ticker.C:
-			log.Printf("Checking Railway service health for tenant %s...", tenantID)
+			log.Printf("Checking service health for tenant %s...", tenantID)
 			// Check if tenant's services are healthy
-			healthy, err := s.rly.CheckTenantServicesHealth(ctx, projectID, tenantID)
+			healthy, err := s.deployer.CheckHealth(ctx, tenantID)
 			if err != nil {
 				log.Printf("Health check failed: %v, retrying...", err)
 				continue // Try again
 			}
 			if healthy {
-				log.Printf("All Railway services for tenant %s are healthy!", tenantID)
+				log.Printf("All services for tenant %s are healthy!", tenantID)
 				return nil
 			}
 			log.Printf("Services for tenant %s not ready yet, waiting...", tenantID)
@@ -323,9 +289,8 @@ func (s *Service) waitForRailwayServices(ctx context.Context, projectID string, 
 	}
 }
 
-// RailwayProject represents a provisioned Railway project
-type RailwayProject struct {
-	ProjectID string
+// ProvisionedProject represents a provisioned tenant project
+type ProvisionedProject struct {
 	Host      string
 	Port      int
 	MongoURL  string
@@ -340,53 +305,6 @@ type CreateTenantRequest struct {
 	Name   string `json:"name"`
 	Email  string `json:"email"`
 	Plan   string `json:"plan"` // free, pro, enterprise
-}
-
-// generateRandomPassword generates a secure random password
-func generateRandomPassword(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?"
-
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-	}
-
-	// Add some randomness from time
-	time.Sleep(time.Nanosecond)
-
-	return string(b)
-}
-
-// extractServiceIDFromURL extracts service ID from Railway URL
-// Handles formats like: <serviceID>.railway.internal or <projectID>-<serviceID>.uprailway.app
-func extractServiceIDFromURL(url string) string {
-	// Remove protocol if present
-	if idx := strings.Index(url, "://"); idx != -1 {
-		url = url[idx+3:]
-	}
-
-	// Remove port if present
-	if idx := strings.Index(url, ":"); idx != -1 {
-		url = url[:idx]
-	}
-
-	// Handle private addressing: <serviceID>.railway.internal
-	if strings.Contains(url, ".railway.internal") {
-		return strings.Split(url, ".")[0]
-	}
-
-	// Handle public addressing: <projectID>-<serviceID>.uprailway.app
-	if strings.Contains(url, ".uprailway.app") {
-		parts := strings.Split(url, "-")
-		if len(parts) >= 2 {
-			// Extract service ID (last part before .uprailway.app)
-			serviceID := strings.Split(parts[1], ".")[0]
-			return serviceID
-		}
-	}
-
-	// Fallback: return the hostname as-is
-	return url
 }
 
 // StorePassword securely stores a password for a tenant service

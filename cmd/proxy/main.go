@@ -14,7 +14,6 @@ import (
 	"github.com/chempik1234/room-service-proxy/internal/config"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
 	"github.com/chempik1234/room-service-proxy/internal/service"
-	"github.com/chempik1234/room-service-proxy/internal/tenant"
 	transportHttp "github.com/chempik1234/room-service-proxy/internal/transport/http"
 	"github.com/chempik1234/super-danis-library-golang/v2/pkg/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,17 +55,14 @@ func main() {
 	// Initialize proxy service
 	proxyService := service.NewService(db, limiter, cfg)
 
-	// Initialize tenant service
-	tenantService := tenant.NewService(db, cfg.RailwayToken, cfg.RailwayProjectID, cfg.RailwayEnvironmentID)
-
 	// Setup graceful shutdown
 	setupGracefulShutdown(db, ctx)
 
 	// Start gRPC server
 	go startGRPCServer(proxyService, cfg, ctx)
 
-	// Start admin API server
-	startAdminAPIServer(db, cfg, tenantService, ctx)
+	// Start admin API server (creates its own tenant service internally)
+	startAdminAPIServer(db, cfg, ctx)
 }
 
 // setupGracefulShutdown handles graceful shutdown of all services
@@ -112,8 +108,13 @@ func startGRPCServer(proxyService *service.Service, cfg *config.Config, ctx cont
 }
 
 // startAdminAPIServer starts the HTTP admin API server
-func startAdminAPIServer(db *pgxpool.Pool, cfg *config.Config, tenantService *tenant.Service, ctx context.Context) {
-	adminAPI := transportHttp.NewAdminAPI(db, cfg.AdminAPIKey, cfg.RailwayToken, cfg.RailwayProjectID, cfg.RailwayEnvironmentID)
+func startAdminAPIServer(db *pgxpool.Pool, cfg *config.Config, ctx context.Context) {
+	adminAPI, err := transportHttp.NewAdminAPI(db, cfg.AdminAPIKey, cfg.RailwayToken, cfg.RailwayProjectID, cfg.RailwayEnvironmentID)
+	if err != nil {
+		logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to create admin API", zap.Error(err))
+		log.Fatalf("Failed to create admin API: %v", err)
+	}
+
 	router := transportHttp.SetupRoutes(adminAPI)
 
 	server := &http.Server{

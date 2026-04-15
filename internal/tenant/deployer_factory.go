@@ -1,15 +1,16 @@
-package ports
+package tenant
 
 import (
 	"fmt"
 	"os"
 
+	"github.com/chempik1234/room-service-proxy/internal/ports"
 	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
 )
 
 // NewServiceDeployer creates a ServiceDeployer based on environment configuration
 // Supports: "railway", "docker", "auto" (default: railway)
-func NewServiceDeployer() (ServiceDeployer, error) {
+func NewServiceDeployer() (ports.ServiceDeployer, error) {
 	deployerType := os.Getenv("SERVICE_DEPLOYER")
 
 	// Default to Railway if not specified
@@ -34,7 +35,7 @@ func NewServiceDeployer() (ServiceDeployer, error) {
 }
 
 // newRailwayDeployer creates a Railway deployer with environment credentials
-func newRailwayDeployer() (ServiceDeployer, error) {
+func newRailwayDeployer() (ports.ServiceDeployer, error) {
 	token := os.Getenv("RAILWAY_TOKEN")
 	projectID := os.Getenv("RAILWAY_PROJECT_ID")
 	environmentID := os.Getenv("RAILWAY_ENVIRONMENT_ID")
