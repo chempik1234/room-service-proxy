@@ -53,6 +53,7 @@ func SetupRoutes(api *AdminAPI) *gin.Engine {
 		protected.POST("/tenants", api.createTenant)
 		protected.GET("/tenants", api.listTenants)
 		protected.GET("/tenants/:id", api.getTenant)
+		protected.GET("/tenants/:id/provisioning-status", api.getTenantProvisioningStatus)
 		protected.PUT("/tenants/:id", api.updateTenant)
 		protected.DELETE("/tenants/:id", api.deleteTenant)
 		protected.POST("/tenants/:id/regenerate-api-key", api.regenerateAPIKey)
@@ -153,14 +154,14 @@ func (api *AdminAPI) createTenant(c *gin.Context) {
 		req.UserID = user.ID
 	}
 
-	// Create tenant
-	newTenant, err := api.tenantSvc.CreateTenantWithProvisioning(c.Request.Context(), &req)
+	// Create tenant (async provisioning)
+	newTenant, err := api.tenantSvc.CreateTenantAsync(c.Request.Context(), &req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, newTenant)
+	c.JSON(http.StatusAccepted, newTenant)
 }
 
 // listTenants lists all tenants (or user's tenants if not admin)
@@ -209,6 +210,19 @@ func (api *AdminAPI) getTenant(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, tenant)
+}
+
+// getTenantProvisioningStatus gets detailed provisioning status for a tenant
+func (api *AdminAPI) getTenantProvisioningStatus(c *gin.Context) {
+	id := c.Param("id")
+
+	status, err := api.tenantSvc.GetTenantProvisioningStatus(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Tenant not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
 }
 
 // updateTenant updates a tenant

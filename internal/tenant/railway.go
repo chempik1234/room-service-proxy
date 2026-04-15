@@ -7,9 +7,56 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
+)
+
+// Standard error types for Railway operations
+var (
+	ErrServiceCreate  = fmt.Errorf("railway service create failed")
+	ErrServiceDelete  = fmt.Errorf("railway service delete failed")
+	ErrProjectDelete  = fmt.Errorf("railway project delete failed")
+	ErrEnvVarSet      = fmt.Errorf("railway environment variable set failed")
+	ErrServiceDeploy  = fmt.Errorf("railway service deploy failed")
+	ErrServiceURL     = fmt.Errorf("railway service URL fetch failed")
+	ErrAPIRequest     = fmt.Errorf("railway API request failed")
+	ErrHealthCheck    = fmt.Errorf("railway health check failed")
 )
 
 // Railway API methods
+
+// retryWithBackoff executes a function with exponential backoff retry
+func retryWithBackoff(ctx context.Context, maxRetries int, initialDelay time.Duration, operation func() error) error {
+	var lastErr error
+	delay := initialDelay
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("operation cancelled: %w", ctx.Err())
+		default:
+		}
+
+		if err := operation(); err != nil {
+			lastErr = err
+			fmt.Printf("Attempt %d/%d failed: %v, retrying in %v\n", attempt+1, maxRetries, err, delay)
+
+			// Wait before retry with context cancellation
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return fmt.Errorf("operation cancelled during retry: %w", ctx.Err())
+			}
+
+			// Exponential backoff
+			delay *= 2
+			continue
+		}
+
+		return nil // Success
+	}
+
+	return fmt.Errorf("operation failed after %d attempts: %w", maxRetries, lastErr)
+}
 
 // CreateProject creates a new Railway project
 func (r *RailwayService) CreateProject(projectName string) (string, error) {
@@ -165,58 +212,78 @@ func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisU
 
 	serviceID := result.Data.ServiceCreate.ID
 
-	// Set environment variables for RoomService
-	if err := r.setEnvironmentVariables(projectID, serviceID, map[string]string{
-		// Service configuration
-		"ROOM_SERVICE_GRPC_PORT":                    "50050",
-		"ROOM_SERVICE_USE_AUTH":                     "true",
-		"ROOM_SERVICE_API_KEY":                      generateRandomPassword(32),
-		"ROOM_SERVICE_RETRY_ATTEMPTS":               "3",
-		"ROOM_SERVICE_RETRY_DELAY_MILLISECONDS":     "500",
-		"ROOM_SERVICE_RETRY_BACKOFF":                "1",
-		"ROOM_SERVICE_LOG_LEVEL":                    "info",
+	// Set environment variables for RoomService with retry
+	err = retryWithBackoff(context.Background(), 3, 2*time.Second, func() error {
+		if err := r.setEnvironmentVariables(projectID, serviceID, map[string]string{
+			// Service configuration
+			"ROOM_SERVICE_GRPC_PORT":                    "50050",
+			"ROOM_SERVICE_USE_AUTH":                     "true",
+			"ROOM_SERVICE_API_KEY":                      generateRandomPassword(32),
+			"ROOM_SERVICE_RETRY_ATTEMPTS":               "3",
+			"ROOM_SERVICE_RETRY_DELAY_MILLISECONDS":     "500",
+			"ROOM_SERVICE_RETRY_BACKOFF":                "1",
+			"ROOM_SERVICE_LOG_LEVEL":                    "info",
 
-		// MongoDB configuration
-		"ROOM_SERVICE_ROOMS_MONGODB_DATABASE":        "rooms_db",
-		"ROOM_SERVICE_ROOMS_MONGODB_ROOMS_COLLECTION": "rooms",
-		"ROOM_SERVICE_ROOMS_MONGODB_READ_CONCERN":    "available",
-		"ROOM_SERVICE_ROOMS_MONGODB_WRITE_CONCERN":   "w: 1",
-		"ROOM_SERVICE_MONGODB_HOSTS":                 mongoURL,
-		"ROOM_SERVICE_MONGODB_MIN_POOL_SIZE":         "1",
-		"ROOM_SERVICE_MONGODB_MAX_POOL_SIZE":         "10",
-		"ROOM_SERVICE_MONGODB_USERNAME":             "admin",
-		"ROOM_SERVICE_MONGODB_PASSWORD":             generateRandomPassword(32),
-		"ROOM_SERVICE_MONGODB_PASSWORD_SET":         "true",
-		"ROOM_SERVICE_MONGODB_RETRY_WRITES":         "true",
-		"ROOM_SERVICE_MONGODB_RETRY_READS":          "true",
+			// MongoDB configuration
+			"ROOM_SERVICE_ROOMS_MONGODB_DATABASE":        "rooms_db",
+			"ROOM_SERVICE_ROOMS_MONGODB_ROOMS_COLLECTION": "rooms",
+			"ROOM_SERVICE_ROOMS_MONGODB_READ_CONCERN":    "available",
+			"ROOM_SERVICE_ROOMS_MONGODB_WRITE_CONCERN":   "w: 1",
+			"ROOM_SERVICE_MONGODB_HOSTS":                 mongoURL,
+			"ROOM_SERVICE_MONGODB_MIN_POOL_SIZE":         "1",
+			"ROOM_SERVICE_MONGODB_MAX_POOL_SIZE":         "10",
+			"ROOM_SERVICE_MONGODB_USERNAME":             "admin",
+			"ROOM_SERVICE_MONGODB_PASSWORD":             generateRandomPassword(32),
+			"ROOM_SERVICE_MONGODB_PASSWORD_SET":         "true",
+			"ROOM_SERVICE_MONGODB_RETRY_WRITES":         "true",
+			"ROOM_SERVICE_MONGODB_RETRY_READS":          "true",
 
-		// Redis configuration
-		"ROOM_SERVICE_REDIS_ADDR":                   redisURL,
-		"ROOM_SERVICE_REDIS_PASSWORD":               generateRandomPassword(32),
-		"ROOM_SERVICE_REDIS_DB":                     "0",
-		"ROOM_SERVICE_REDIS_TTL_SECONDS":            "3600",
-		"ROOM_SERVICE_REDIS_TIMEOUT_DIAL_MILLISECONDS": "5000",
-		"ROOM_SERVICE_REDIS_TIMEOUT_READ_MILLISECONDS":  "1000",
-		"ROOM_SERVICE_REDIS_TIMEOUT_WRITE_MILLISECONDS": "1000",
-		"ROOM_SERVICE_REDIS_RETRIES_MAX_RETRIES":    "3",
-		"ROOM_SERVICE_REDIS_POOL_SIZE":              "3",
-		"ROOM_SERVICE_REDIS_POOL_MIN_IDLE_CONNECTIONS": "2",
+			// Redis configuration
+			"ROOM_SERVICE_REDIS_ADDR":                   redisURL,
+			"ROOM_SERVICE_REDIS_PASSWORD":               generateRandomPassword(32),
+			"ROOM_SERVICE_REDIS_DB":                     "0",
+			"ROOM_SERVICE_REDIS_TTL_SECONDS":            "3600",
+			"ROOM_SERVICE_REDIS_TIMEOUT_DIAL_MILLISECONDS": "5000",
+			"ROOM_SERVICE_REDIS_TIMEOUT_READ_MILLISECONDS":  "1000",
+			"ROOM_SERVICE_REDIS_TIMEOUT_WRITE_MILLISECONDS": "1000",
+			"ROOM_SERVICE_REDIS_RETRIES_MAX_RETRIES":    "3",
+			"ROOM_SERVICE_REDIS_POOL_SIZE":              "3",
+			"ROOM_SERVICE_REDIS_POOL_MIN_IDLE_CONNECTIONS": "2",
 
-		// Tenant identification
-		"TENANT_ID":                                tenantID,
-	}); err != nil {
-		return nil, err
+			// Tenant identification
+			"TENANT_ID":                                tenantID,
+		}); err != nil {
+			return fmt.Errorf("%w: %w", ErrEnvVarSet, err)
+		}
+		return nil
+	})
+
+	if err != nil {
+		// Clean up the created service since env setup failed
+		_ = r.DeleteService(serviceID)
+		return nil, fmt.Errorf("failed to set environment variables after retries: %w", err)
 	}
 
 	// Get service URL
 	host, err := r.getServiceURL(projectID, serviceID, "")
 	if err != nil {
-		return nil, err
+		// Clean up the created service since URL fetch failed
+		_ = r.DeleteService(serviceID)
+		return nil, fmt.Errorf("%w: %w", ErrServiceURL, err)
 	}
 
-	// Deploy service
-	if err := r.deployService(projectID, serviceID); err != nil {
-		return nil, err
+	// Deploy service with retry
+	err = retryWithBackoff(context.Background(), 3, 2*time.Second, func() error {
+		if err := r.deployService(projectID, serviceID); err != nil {
+			return fmt.Errorf("%w: %w", ErrServiceDeploy, err)
+		}
+		return nil
+	})
+
+	if err != nil {
+		// Clean up the created service since deploy failed
+		_ = r.DeleteService(serviceID)
+		return nil, fmt.Errorf("failed to deploy service after retries: %w", err)
 	}
 
 	return &RoomServiceInfo{
@@ -250,7 +317,7 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 
 	resp, err := r.makeRequest(payload)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %w", ErrHealthCheck, err)
 	}
 
 	var result struct {
@@ -265,7 +332,7 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 	}
 
 	if err := json.Unmarshal(resp, &result); err != nil {
-		return false, err
+		return false, fmt.Errorf("%w: %w", ErrHealthCheck, err)
 	}
 
 	// Check if all services are running
@@ -283,12 +350,12 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrAPIRequest, err)
 	}
 
 	req, err := http.NewRequest("POST", r.BaseURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrAPIRequest, err)
 	}
 
 	req.Header.Set("Authorization", "Bearer "+r.Token)
@@ -296,12 +363,13 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 
 	resp, err := r.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrAPIRequest, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Railway API error: %s", resp.Status)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("%w: status %d: %s", ErrAPIRequest, resp.StatusCode, string(bodyBytes))
 	}
 
 	return io.ReadAll(resp.Body)
@@ -332,7 +400,7 @@ func (r *RailwayService) DeleteService(serviceID string) error {
 		`, serviceID),
 	}
 
-	// Silent fail - if service doesn't exist, that's fine for idempotent cleanup
+	// Silent fail - if service doesn't exist or deletion fails, that's fine for idempotent cleanup
 	_, err := r.makeRequest(payload)
 	if err != nil {
 		// Log but don't return error - this makes it idempotent
@@ -340,6 +408,7 @@ func (r *RailwayService) DeleteService(serviceID string) error {
 		return nil
 	}
 
+	fmt.Printf("Successfully deleted service %s\n", serviceID)
 	return nil
 }
 
@@ -365,20 +434,31 @@ func (r *RailwayService) DeleteProject(projectID string) error {
 }
 
 func (r *RailwayService) setEnvironmentVariables(projectID, serviceID string, vars map[string]string) error {
-	payload := map[string]interface{}{
-		"query": `
-			mutation($serviceId: String!, $vars: JSON!) {
-				serviceVariablesUpdate(serviceId: $serviceId, vars: $vars)
-			}
-		`,
-		"variables": map[string]interface{}{
-			"serviceId": serviceID,
-			"vars":      vars,
-		},
+	// Railway uses serviceUpdate for setting environment variables
+	// Need to set each variable individually
+	for key, value := range vars {
+		payload := map[string]interface{}{
+			"query": `
+				mutation($serviceId: String!, $key: String!, $value: String!) {
+					serviceVarsUpdate(
+						serviceId: $serviceId,
+						vars: [{key: $key, value: $value}]
+					)
+				}
+			`,
+			"variables": map[string]interface{}{
+				"serviceId": serviceID,
+				"key":      key,
+				"value":    value,
+			},
+		}
+
+		if _, err := r.makeRequest(payload); err != nil {
+			return fmt.Errorf("failed to set env var %s: %w", key, err)
+		}
 	}
 
-	_, err := r.makeRequest(payload)
-	return err
+	return nil
 }
 
 func (r *RailwayService) deployService(projectID, serviceID string) error {

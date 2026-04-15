@@ -13,8 +13,9 @@ import (
 
 // Service handles tenant business logic
 type Service struct {
-	db  *pgxpool.Pool
-	rly *RailwayService // Railway client for provisioning
+	db                *pgxpool.Pool
+	rly               *RailwayService // Railway client for provisioning
+	provisioningQueue chan *Tenant     // Queue for async provisioning
 }
 
 // RailwayService handles Railway API calls
@@ -27,7 +28,7 @@ type RailwayService struct {
 
 // NewService creates a new tenant service
 func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string) *Service {
-	return &Service{
+	service := &Service{
 		db: db,
 		rly: &RailwayService{
 			Token:     railwayToken,
@@ -35,7 +36,20 @@ func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string) 
 			ProjectID: railwayProjectID,
 			client:    &http.Client{Timeout: 30 * time.Second},
 		},
+		provisioningQueue: make(chan *Tenant, 100),
 	}
+
+	// Start background provisioning worker
+	go service.provisioningWorker()
+
+	return service
+}
+
+// ProvisioningJob represents a tenant provisioning job
+type ProvisioningJob struct {
+	Tenant  *Tenant
+	Context context.Context
+	Error   error
 }
 
 // CreateTenantWithProvisioning creates a new tenant and provisions Railway services
@@ -72,6 +86,115 @@ func (s *Service) CreateTenantWithProvisioning(ctx context.Context, req *CreateT
 	}
 
 	return tenant, nil
+}
+
+// CreateTenantAsync creates a new tenant and queues async provisioning
+func (s *Service) CreateTenantAsync(ctx context.Context, req *CreateTenantRequest) (*Tenant, error) {
+	// Create tenant record first
+	tenant := &Tenant{
+		UserID:            req.UserID,
+		Name:              req.Name,
+		Email:             req.Email,
+		Plan:              req.Plan,
+		Status:            "provisioning",
+		ProvisioningStatus: "pending",
+	}
+
+	repo := NewRepository(s.db)
+	if err := repo.Create(ctx, tenant); err != nil {
+		return nil, fmt.Errorf("failed to create tenant: %w", err)
+	}
+
+	// Queue for async provisioning
+	select {
+	case s.provisioningQueue <- tenant:
+		log.Printf("Tenant %s queued for provisioning", tenant.ID)
+	default:
+		// Queue full, handle synchronously (fallback)
+		log.Printf("Provisioning queue full, handling %s synchronously", tenant.ID)
+		return s.CreateTenantWithProvisioning(ctx, req)
+	}
+
+	return tenant, nil
+}
+
+// provisioningWorker handles tenant provisioning in the background
+func (s *Service) provisioningWorker() {
+	for tenant := range s.provisioningQueue {
+		log.Printf("Processing tenant %s provisioning", tenant.ID)
+
+		// Update status to creating_services
+		s.updateTenantStatus(tenant.ID, "creating_services", "")
+
+		// Provision Railway services
+		ctx := context.Background()
+		railwayProject, err := s.provisionRailwayProject(ctx, tenant)
+
+		if err != nil {
+			// Update tenant with failed status
+			s.updateTenantStatus(tenant.ID, "failed", err.Error())
+			log.Printf("Failed to provision tenant %s: %v", tenant.ID, err)
+			continue
+		}
+
+		// Update tenant with Railway info
+		repo := NewRepository(s.db)
+		tenant.Host = railwayProject.Host
+		tenant.Port = railwayProject.Port
+		tenant.Status = "active"
+		tenant.ProvisioningStatus = "ready"
+		tenant.ProvisioningError = ""
+
+		if err := repo.Update(ctx, tenant); err != nil {
+			log.Printf("Failed to update tenant %s: %v", tenant.ID, err)
+			s.updateTenantStatus(tenant.ID, "failed", fmt.Sprintf("Failed to update tenant: %v", err))
+			continue
+		}
+
+		log.Printf("Successfully provisioned tenant %s", tenant.ID)
+	}
+}
+
+// updateTenantStatus updates tenant provisioning status
+func (s *Service) updateTenantStatus(tenantID, status, errorMsg string) {
+	ctx := context.Background()
+	repo := NewRepository(s.db)
+
+	tenant, err := repo.GetByID(ctx, tenantID)
+	if err != nil {
+		log.Printf("Failed to get tenant %s for status update: %v", tenantID, err)
+		return
+	}
+
+	tenant.ProvisioningStatus = status
+	if errorMsg != "" {
+		tenant.ProvisioningError = errorMsg
+		tenant.Status = "provisioning_failed"
+	}
+
+	if err := repo.Update(ctx, tenant); err != nil {
+		log.Printf("Failed to update tenant %s status: %v", tenantID, err)
+	}
+}
+
+// GetTenantProvisioningStatus returns detailed provisioning status
+func (s *Service) GetTenantProvisioningStatus(ctx context.Context, tenantID string) (map[string]interface{}, error) {
+	repo := NewRepository(s.db)
+	tenant, err := repo.GetByID(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	return map[string]interface{}{
+		"tenant_id":          tenant.ID,
+		"status":             tenant.Status,
+		"provisioning_status": tenant.ProvisioningStatus,
+		"provisioning_error":  tenant.ProvisioningError,
+		"host":               tenant.Host,
+		"port":               tenant.Port,
+		"created_at":         tenant.CreatedAt,
+		"updated_at":         tenant.UpdatedAt,
+	}, nil
 }
 
 // provisionRailwayProject provisions a complete Railway project for a tenant
@@ -159,25 +282,40 @@ func (s *Service) provisionRailwayProject(ctx context.Context, tenant *Tenant) (
 
 // waitForRailwayServices waits for Railway services to be ready
 func (s *Service) waitForRailwayServices(ctx context.Context, projectID string) error {
+	// Give services time to initialize - Railway can take 30-60 seconds
+	log.Println("Waiting for Railway services to initialize...")
+	time.Sleep(30 * time.Second)
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
+
+	// First check immediately after initial delay
+	healthy, err := s.rly.CheckServicesHealth(ctx, projectID)
+	if err == nil && healthy {
+		log.Println("All Railway services are healthy!")
+		return nil
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("timeout waiting for Railway services to be ready")
 		case <-ticker.C:
+			log.Println("Checking Railway service health...")
 			// Check if all services are healthy
 			healthy, err := s.rly.CheckServicesHealth(ctx, projectID)
 			if err != nil {
+				log.Printf("Health check failed: %v, retrying...", err)
 				continue // Try again
 			}
 			if healthy {
+				log.Println("All Railway services are healthy!")
 				return nil
 			}
+			log.Println("Services not ready yet, waiting...")
 		}
 	}
 }
