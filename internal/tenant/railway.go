@@ -393,7 +393,16 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%w: status %d: %s", ErrAPIRequest, resp.StatusCode, string(bodyBytes))
+		errorMsg := string(bodyBytes)
+
+		// Check for Railway-specific limit errors
+		if strings.Contains(errorMsg, "exceeded limit") ||
+		   strings.Contains(errorMsg, "service limit") ||
+		   strings.Contains(errorMsg, "quota exceeded") {
+			return nil, fmt.Errorf("Railway service limit exceeded: %s", errorMsg)
+		}
+
+		return nil, fmt.Errorf("%w: status %d: %s", ErrAPIRequest, resp.StatusCode, errorMsg)
 	}
 
 	return io.ReadAll(resp.Body)
