@@ -8,14 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chempik1234/room-service-proxy/internal/ports"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service handles tenant business logic
 type Service struct {
 	db                *pgxpool.Pool
-	rly               *RailwayService // Railway client for provisioning
-	provisioningQueue chan *Tenant     // Queue for async provisioning
+	deployer          ports.ServiceDeployer // Service deployment port
+	provisioningQueue chan *Tenant           // Queue for async provisioning
 }
 
 // RailwayService handles Railway API calls
@@ -27,24 +28,24 @@ type RailwayService struct {
 	client        *http.Client
 }
 
-// NewService creates a new tenant service
-func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string, railwayEnvironmentID string) *Service {
+// NewService creates a new tenant service with the appropriate deployer
+func NewService(db *pgxpool.Pool) (*Service, error) {
+	// Use factory to create deployer based on environment
+	deployer, err := ports.NewServiceDeployer()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create service deployer: %w", err)
+	}
+
 	service := &Service{
-		db: db,
-		rly: &RailwayService{
-			Token:         railwayToken,
-			BaseURL:       "https://backboard.railway.app/graphql/v2",
-			ProjectID:     railwayProjectID,
-			EnvironmentID: railwayEnvironmentID,
-			client:        &http.Client{Timeout: 30 * time.Second},
-		},
+		db:                db,
+		deployer:          deployer,
 		provisioningQueue: make(chan *Tenant, 100),
 	}
 
 	// Start background provisioning worker
 	go service.provisioningWorker()
 
-	return service
+	return service, nil
 }
 
 // ProvisioningJob represents a tenant provisioning job
