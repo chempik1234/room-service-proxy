@@ -257,6 +257,7 @@ type RoomServiceInfo struct {
 
 // CheckServicesHealth checks if all services in a project are healthy
 func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID string) (bool, error) {
+	// Check if services exist and have deployments
 	payload := map[string]interface{}{
 		"query": fmt.Sprintf(`
 			{
@@ -265,7 +266,15 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 						edges {
 							node {
 								id
-								status
+								name
+								deployments {
+									edges {
+										node {
+											id
+											status
+										}
+									}
+								}
 							}
 						}
 					}
@@ -285,8 +294,16 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 				Services struct {
 					Edges []struct {
 						Node struct {
-							ID     string `json:"id"`
-							Status string `json:"status"`
+							ID          string `json:"id"`
+							Name        string `json:"name"`
+							Deployments struct {
+								Edges []struct {
+									Node struct {
+										ID     string `json:"id"`
+										Status string `json:"status"`
+									} `json:"node"`
+								} `json:"edges"`
+							} `json:"deployments"`
 						} `json:"node"`
 					} `json:"edges"`
 				} `json:"services"`
@@ -298,9 +315,15 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 		return false, fmt.Errorf("%w: %w", ErrHealthCheck, err)
 	}
 
-	// Check if all services are running
+	// Check if all services have at least one successful deployment
 	for _, edge := range result.Data.Project.Services.Edges {
-		if edge.Node.Status != "RUNNING" && edge.Node.Status != "READY" {
+		if len(edge.Node.Deployments.Edges) == 0 {
+			return false, nil
+		}
+
+		// Check latest deployment status
+		latestDeployment := edge.Node.Deployments.Edges[0]
+		if latestDeployment.Node.Status != "SUCCESS" && latestDeployment.Node.Status != "READY" && latestDeployment.Node.Status != "ACTIVE" {
 			return false, nil
 		}
 	}
