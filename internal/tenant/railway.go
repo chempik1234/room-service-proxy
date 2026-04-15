@@ -257,6 +257,11 @@ type RoomServiceInfo struct {
 
 // CheckServicesHealth checks if all services in a project are healthy
 func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID string) (bool, error) {
+	return r.CheckTenantServicesHealth(ctx, projectID, "")
+}
+
+// CheckTenantServicesHealth checks if specific tenant services are healthy
+func (r *RailwayService) CheckTenantServicesHealth(ctx context.Context, projectID string, tenantID string) (bool, error) {
 	// Check if services exist and have deployments
 	payload := map[string]interface{}{
 		"query": fmt.Sprintf(`
@@ -315,8 +320,40 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 		return false, fmt.Errorf("%w: %w", ErrHealthCheck, err)
 	}
 
-	// Check if all services have at least one successful deployment
-	for _, edge := range result.Data.Project.Services.Edges {
+	// Filter services based on tenantID if provided
+	var servicesToCheck []struct {
+		Node struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Deployments struct {
+				Edges []struct {
+					Node struct {
+						ID     string `json:"id"`
+						Status string `json:"status"`
+					} `json:"node"`
+				} `json:"edges"`
+			} `json:"deployments"`
+		} `json:"node"`
+	}
+
+	if tenantID != "" {
+		// Only check services for this tenant
+		for _, edge := range result.Data.Project.Services.Edges {
+			if strings.Contains(edge.Node.Name, tenantID) {
+				servicesToCheck = append(servicesToCheck, edge)
+			}
+		}
+		// If no tenant services found, they don't exist
+		if len(servicesToCheck) == 0 {
+			return false, nil
+		}
+	} else {
+		// Check all services in project
+		servicesToCheck = result.Data.Project.Services.Edges
+	}
+
+	// Check if all relevant services have at least one successful deployment
+	for _, edge := range servicesToCheck {
 		if len(edge.Node.Deployments.Edges) == 0 {
 			return false, nil
 		}

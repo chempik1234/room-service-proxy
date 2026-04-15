@@ -254,7 +254,7 @@ func (s *Service) provisionRailwayProject(ctx context.Context, tenant *Tenant) (
 	log.Println("- created new RoomService for tenant", tenant.ID)
 
 	// Wait for services to be ready
-	if err := s.waitForRailwayServices(ctx, projectID); err != nil {
+	if err := s.waitForRailwayServices(ctx, projectID, tenant.ID); err != nil {
 		// Idempotent cleanup: delete all services
 		log.Printf("ERROR: Services not ready, attempting cleanup for tenant %s", tenant.ID)
 		if roomServiceID != "" {
@@ -283,7 +283,7 @@ func (s *Service) provisionRailwayProject(ctx context.Context, tenant *Tenant) (
 }
 
 // waitForRailwayServices waits for Railway services to be ready
-func (s *Service) waitForRailwayServices(ctx context.Context, projectID string) error {
+func (s *Service) waitForRailwayServices(ctx context.Context, projectID string, tenantID string) error {
 	// Give services time to initialize - Railway can take 30-60 seconds
 	log.Println("Waiting for Railway services to initialize...")
 	time.Sleep(30 * time.Second)
@@ -295,29 +295,29 @@ func (s *Service) waitForRailwayServices(ctx context.Context, projectID string) 
 	defer ticker.Stop()
 
 	// First check immediately after initial delay
-	healthy, err := s.rly.CheckServicesHealth(ctx, projectID)
+	healthy, err := s.rly.CheckTenantServicesHealth(ctx, projectID, tenantID)
 	if err == nil && healthy {
-		log.Println("All Railway services are healthy!")
+		log.Printf("All Railway services for tenant %s are healthy!", tenantID)
 		return nil
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for Railway services to be ready")
+			return fmt.Errorf("timeout waiting for Railway services to be ready for tenant %s", tenantID)
 		case <-ticker.C:
-			log.Println("Checking Railway service health...")
-			// Check if all services are healthy
-			healthy, err := s.rly.CheckServicesHealth(ctx, projectID)
+			log.Printf("Checking Railway service health for tenant %s...", tenantID)
+			// Check if tenant's services are healthy
+			healthy, err := s.rly.CheckTenantServicesHealth(ctx, projectID, tenantID)
 			if err != nil {
 				log.Printf("Health check failed: %v, retrying...", err)
 				continue // Try again
 			}
 			if healthy {
-				log.Println("All Railway services are healthy!")
+				log.Printf("All Railway services for tenant %s are healthy!", tenantID)
 				return nil
 			}
-			log.Println("Services not ready yet, waiting...")
+			log.Printf("Services for tenant %s not ready yet, waiting...", tenantID)
 		}
 	}
 }
