@@ -3,6 +3,7 @@ package tenant
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +46,9 @@ func (r *Repository) Create(ctx context.Context, tenant *Tenant) error {
 	tenant.APIKey = generateAPIKey(tenant.ID)
 	tenant.CreatedAt = now
 	tenant.UpdatedAt = now
+
+	// Log tenant creation for debugging
+	fmt.Printf("🆕 Creating tenant: name=%q, id=%s, apiKey=%s\n", tenant.Name, tenant.ID, tenant.APIKey)
 
 	// Set defaults
 	if tenant.Status == "" {
@@ -238,8 +242,42 @@ func (r *Repository) RegenerateAPIKey(ctx context.Context, id string) (string, e
 
 // Helper functions
 func generateTenantID(name string) string {
-	// Generate a unique tenant ID based on name and UUID
-	return fmt.Sprintf("tenant-%s-%s", name, uuid.New().String()[:8])
+	// Sanitize name to remove URL-unsafe characters
+	fmt.Printf("🔧 [DEBUG] Original tenant name: %q\n", name)
+
+	sanitizedName := strings.ToLower(strings.TrimSpace(name))
+
+	// Replace ALL URL-unsafe characters
+	sanitizedName = strings.ReplaceAll(sanitizedName, "/", "-")
+	sanitizedName = strings.ReplaceAll(sanitizedName, " ", "-")
+	sanitizedName = strings.ReplaceAll(sanitizedName, "_", "-")
+	sanitizedName = strings.ReplaceAll(sanitizedName, "\\", "-")  // Remove backslashes
+	sanitizedName = strings.ReplaceAll(sanitizedName, ":", "-")   // Remove colons
+	sanitizedName = strings.ReplaceAll(sanitizedName, "@", "-")   // Remove at signs
+	sanitizedName = strings.ReplaceAll(sanitizedName, ".", "-")   // Remove dots
+	sanitizedName = strings.ReplaceAll(sanitizedName, "*", "-")   // Remove asterisks
+
+	fmt.Printf("🔧 [DEBUG] Sanitized name: %s\n", sanitizedName)
+
+	// Double-check no unsafe characters remain
+	unsafe := []string{"/", " ", "_", "\\", ":", "@", "."}
+	for _, char := range unsafe {
+		if strings.Contains(sanitizedName, char) {
+			fmt.Printf("❌ [ERROR] Sanitization failed! Still contains: %s\n", char)
+		}
+	}
+
+	// Generate a unique tenant ID
+	tenantID := fmt.Sprintf("tenant-%s-%s", sanitizedName, uuid.New().String()[:8])
+
+	// Final verification
+	if strings.Contains(tenantID, "/") {
+		fmt.Printf("❌ [CRITICAL] Generated ID still contains slash! ID: %s\n", tenantID)
+	}
+
+	fmt.Printf("🔧 [DEBUG] Generated tenant ID: name=%q → id=%s\n", name, tenantID)
+
+	return tenantID
 }
 
 func generateAPIKey(tenantID string) string {

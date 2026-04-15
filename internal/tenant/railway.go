@@ -434,28 +434,34 @@ func (r *RailwayService) DeleteProject(projectID string) error {
 }
 
 func (r *RailwayService) setEnvironmentVariables(projectID, serviceID string, vars map[string]string) error {
-	// Railway uses serviceUpdate for setting environment variables
-	// Need to set each variable individually
-	for key, value := range vars {
-		payload := map[string]interface{}{
-			"query": `
-				mutation($serviceId: String!, $key: String!, $value: String!) {
-					serviceVarsUpdate(
-						serviceId: $serviceId,
-						vars: [{key: $key, value: $value}]
-					)
-				}
-			`,
-			"variables": map[string]interface{}{
-				"serviceId": serviceID,
-				"key":      key,
-				"value":    value,
-			},
-		}
+	// Based on Railway GraphQL schema, use variableCollectionUpsert
+	// This expects: input: VariableCollectionUpsertInput { serviceId, vars }
 
-		if _, err := r.makeRequest(payload); err != nil {
-			return fmt.Errorf("failed to set env var %s: %w", key, err)
-		}
+	// Convert vars map to array of {key, value} objects
+	var varList []map[string]string
+	for key, value := range vars {
+		varList = append(varList, map[string]string{
+			"key":   key,
+			"value": value,
+		})
+	}
+
+	payload := map[string]interface{}{
+		"query": `
+			mutation($input: VariableCollectionUpsertInput!) {
+				variableCollectionUpsert(input: $input)
+			}
+		`,
+		"variables": map[string]interface{}{
+			"input": map[string]interface{}{
+				"serviceId": serviceID,
+				"vars":      varList,
+			},
+		},
+	}
+
+	if _, err := r.makeRequest(payload); err != nil {
+		return fmt.Errorf("failed to set environment variables: %w", err)
 	}
 
 	return nil
