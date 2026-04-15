@@ -262,8 +262,12 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 			{
 				project(id: "%s") {
 					services {
-						id
-						status
+						edges {
+							node {
+								id
+								status
+							}
+						}
 					}
 				}
 			}
@@ -278,9 +282,13 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 	var result struct {
 		Data struct {
 			Project struct {
-				Services []struct {
-					ID     string `json:"id"`
-					Status string `json:"status"`
+				Services struct {
+					Edges []struct {
+						Node struct {
+							ID     string `json:"id"`
+							Status string `json:"status"`
+						} `json:"node"`
+					} `json:"edges"`
 				} `json:"services"`
 			} `json:"project"`
 		} `json:"data"`
@@ -291,8 +299,8 @@ func (r *RailwayService) CheckServicesHealth(ctx context.Context, projectID stri
 	}
 
 	// Check if all services are running
-	for _, service := range result.Data.Project.Services {
-		if service.Status != "RUNNING" && service.Status != "READY" {
+	for _, edge := range result.Data.Project.Services.Edges {
+		if edge.Node.Status != "RUNNING" && edge.Node.Status != "READY" {
 			return false, nil
 		}
 	}
