@@ -61,8 +61,8 @@ func main() {
 	// Start gRPC server
 	go startGRPCServer(proxyService, cfg, ctx)
 
-	// Start admin API server (creates its own tenant service internally)
-	startAdminAPIServer(db, cfg, ctx)
+	// Start admin API server (creates its own database connection and tenant service)
+	startAdminAPIServer(cfg, ctx)
 }
 
 // setupGracefulShutdown handles graceful shutdown of all services
@@ -108,8 +108,23 @@ func startGRPCServer(proxyService *service.Service, cfg *config.Config, ctx cont
 }
 
 // startAdminAPIServer starts the HTTP admin API server
-func startAdminAPIServer(db *pgxpool.Pool, cfg *config.Config, ctx context.Context) {
-	adminAPI, err := transportHttp.NewAdminAPI(db, cfg.AdminAPIKey, cfg.RailwayToken, cfg.RailwayProjectID, cfg.RailwayEnvironmentID)
+func startAdminAPIServer(cfg *config.Config, ctx context.Context) {
+	// Prepare deployment configuration
+	deploymentConfig := make(map[string]string)
+
+	switch cfg.DeploymentProvider {
+	case "railway":
+		deploymentConfig["railway_token"] = cfg.RailwayToken
+		deploymentConfig["railway_project_id"] = cfg.RailwayProjectID
+		deploymentConfig["railway_environment_id"] = cfg.RailwayEnvironmentID
+	case "yandex":
+		deploymentConfig["yandex_folder_id"] = cfg.YandexFolderID
+		deploymentConfig["yandex_zone"] = cfg.YandexZone
+		deploymentConfig["yandex_service_account_key"] = cfg.YandexServiceAccountKey
+		deploymentConfig["yandex_ssh_key_path"] = cfg.YandexSSHKeyPath
+	}
+
+	adminAPI, err := transportHttp.NewAdminAPI(cfg.DatabaseURL, cfg.AdminAPIKey, cfg.DeploymentProvider, deploymentConfig)
 	if err != nil {
 		logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to create admin API", zap.Error(err))
 		log.Fatalf("Failed to create admin API: %v", err)
@@ -125,7 +140,7 @@ func startAdminAPIServer(db *pgxpool.Pool, cfg *config.Config, ctx context.Conte
 		IdleTimeout:   60 * time.Second,
 	}
 
-	logger.GetLoggerFromCtx(ctx).Info(ctx, "Admin API server started", zap.Int("port", cfg.AdminPort))
+	logger.GetLoggerFromCtx(ctx).Info(ctx, "Admin API server started", zap.Int("port", cfg.AdminPort), zap.String("deployment_provider", cfg.DeploymentProvider))
 	if err := server.ListenAndServe(); err != nil {
 		logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to start admin API", zap.Error(err))
 		log.Fatalf("Failed to start admin API: %v", err)

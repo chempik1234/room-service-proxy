@@ -1,0 +1,42 @@
+name: Deploy to Yandex Cloud
+
+on:
+  push:
+    branches: [ master ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Deploy to Yandex Cloud
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.YANDEK_HOST }}
+        username: ${{ secrets.YANDEK_USER }}
+        key: ${{ secrets.YANDEK_SSH_KEY }}
+        script: |
+          # Stop existing service
+          sudo systemctl stop roomservice-proxy || true
+
+          # Download and deploy new binary
+          wget -O /tmp/roomservice-proxy.tar.gz https://github.com/${{ github.repository }}/releases/latest/download/roomservice-proxy-linux-amd64.tar.gz
+          tar -xzf /tmp/roomservice-proxy.tar.gz -C /opt/roomservice-proxy
+
+          # Update configuration if needed
+          # sudo cp /tmp/config.yaml /etc/roomservice-proxy/config.yaml
+
+          # Start service
+          sudo systemctl start roomservice-proxy
+
+          # Check status
+          sudo systemctl status roomservice-proxy
+          curl -f http://localhost:8080/health || exit 1
+
+    - name: Notify on success
+      if: success()
+      run: echo "✅ Deployment successful!"
+
+    - name: Notify on failure
+      if: failure()
+      run: echo "❌ Deployment failed!"

@@ -31,10 +31,19 @@ type Config struct {
 	EnableAuth      bool
 	EnableRateLimit bool
 
+	// Deployment Provider
+	DeploymentProvider string // "railway", "yandex", or "docker"
+
 	// Railway config
 	RailwayToken        string
 	RailwayProjectID    string
 	RailwayEnvironmentID string
+
+	// Yandex Cloud config
+	YandexFolderID          string
+	YandexZone              string
+	YandexServiceAccountKey string
+	YandexSSHKeyPath         string
 }
 
 // Load loads configuration from environment variables
@@ -62,10 +71,19 @@ func Load() (*Config, error) {
 		EnableAuth:      getEnvAsBool("ENABLE_AUTH", true),
 		EnableRateLimit: getEnvAsBool("ENABLE_RATE_LIMIT", true),
 
+		// Deployment Provider
+		DeploymentProvider: getEnv("DEPLOYMENT_PROVIDER", "railway"),
+
 		// Railway config
 		RailwayToken:        getEnv("RAILWAY_TOKEN", ""),
 		RailwayProjectID:    getEnv("RAILWAY_PROJECT_ID", ""),
 		RailwayEnvironmentID: getEnv("RAILWAY_ENVIRONMENT_ID", ""),
+
+		// Yandex Cloud config
+		YandexFolderID:          getEnv("YANDEX_FOLDER_ID", ""),
+		YandexZone:              getEnv("YANDEX_ZONE", "ru-central1-a"),
+		YandexServiceAccountKey: getEnv("YANDEX_SERVICE_ACCOUNT_KEY", ""),
+		YandexSSHKeyPath:         getEnv("YANDEX_SSH_KEY_PATH", ""),
 	}
 
 	// Validate required fields
@@ -78,6 +96,7 @@ func Load() (*Config, error) {
 
 // Validate checks if all required configuration is present
 func (c *Config) Validate() error {
+	// Common validations for all providers
 	if c.DatabaseURL == "" {
 		return errors.New("DATABASE_URL is required")
 	}
@@ -98,16 +117,36 @@ func (c *Config) Validate() error {
 		return errors.New("RATE_LIMIT_RPS must be positive")
 	}
 
-	if c.RailwayToken == "" {
-		return errors.New("RAILWAY_TOKEN is required")
-	}
-
-	if c.RailwayProjectID == "" {
-		return errors.New("RAILWAY_PROJECT_ID is required")
-	}
-
-	if c.RailwayEnvironmentID == "" {
-		return errors.New("RAILWAY_ENVIRONMENT_ID is required")
+	// Provider-specific validations
+	switch c.DeploymentProvider {
+	case "railway":
+		if c.RailwayToken == "" {
+			return errors.New("RAILWAY_TOKEN is required when using Railway provider")
+		}
+		if c.RailwayProjectID == "" {
+			return errors.New("RAILWAY_PROJECT_ID is required when using Railway provider")
+		}
+		if c.RailwayEnvironmentID == "" {
+			return errors.New("RAILWAY_ENVIRONMENT_ID is required when using Railway provider")
+		}
+	case "yandex":
+		if c.YandexFolderID == "" {
+			return errors.New("YANDEX_FOLDER_ID is required when using Yandex provider")
+		}
+		if c.YandexZone == "" {
+			return errors.New("YANDEX_ZONE is required when using Yandex provider")
+		}
+		if c.YandexServiceAccountKey == "" {
+			return errors.New("YANDEX_SERVICE_ACCOUNT_KEY is required when using Yandex provider")
+		}
+		if c.YandexSSHKeyPath == "" {
+			return errors.New("YANDEX_SSH_KEY_PATH is required when using Yandex provider")
+		}
+	case "docker":
+		// Docker doesn't require any additional configuration
+		return nil
+	default:
+		return fmt.Errorf("unknown DEPLOYMENT_PROVIDER: %s (must be 'railway', 'yandex', or 'docker')", c.DeploymentProvider)
 	}
 
 	return nil

@@ -1,0 +1,487 @@
+package adapters
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/chempik1234/room-service-proxy/internal/dto"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/client"
+)
+
+// DockerServiceDeployer implements ServiceDeployer using real Docker
+type DockerServiceDeployer struct {
+	dockerClient *client.Client
+	network      string
+	mongoImage   string
+	redisImage   string
+	appImage     string
+	basePort     int
+}
+
+// NewDockerServiceDeployer creates a new real Docker-based deployer
+func NewDockerServiceDeployer() (*DockerServiceDeployer, error) {
+	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Docker client: %w", err)
+	}
+
+	return &DockerServiceDeployer{
+		dockerClient: cli,
+		network:      "roomservice-network",
+		mongoImage:   "mongo:6",
+		redisImage:   "redis:7",
+		appImage:     "chempik1234/roomservice:latest",
+		basePort:     27000,
+	}, nil
+}
+
+// ensureNetwork creates the Docker network if it doesn't exist
+func (d *DockerServiceDeployer) ensureNetwork(ctx context.Context) error {
+	networks, err := d.dockerClient.NetworkList(ctx, types.NetworkListOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to list networks: %w", err)
+	}
+
+	for _, net := range networks {
+		if net.Name == d.network {
+			return nil // Network already exists
+		}
+	}
+
+	// Create network
+	_, err = d.dockerClient.NetworkCreate(ctx, d.network, types.NetworkCreate{
+		Driver: "bridge",
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create network: %w", err)
+	}
+
+	log.Printf("🐳 Created Docker network: %s", d.network)
+	return nil
+}
+
+// DeployDatabase deploys MongoDB using real Docker
+func (d *DockerServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error) {
+	serviceName := fmt.Sprintf("%s-mongo", tenantID)
+	password := generateRandomPassword(32)
+
+	// Ensure network exists
+	if err := d.ensureNetwork(ctx); err != nil {
+		return dto.DatabaseDeployment{}, err
+	}
+
+	// Pull MongoDB image if not present
+	log.Printf("🐳 Pulling MongoDB image...")
+	reader, err := d.dockerClient.ImagePull(ctx, d.mongoImage, types.ImagePullOptions{})
+	if err != nil {
+		return dto.DatabaseDeployment{}, fmt.Errorf("failed to pull MongoDB image: %w", err)
+	}
+	reader.Close()
+
+	// Create MongoDB container
+	port := d.basePort + 1
+	containerConfig := &container.Config{
+		Image: d.mongoImage,
+		Env: []string{
+			fmt.Sprintf("MONGO_INITDB_ROOT_USERNAME=admin"),
+			fmt.Sprintf("MONGO_INITDB_ROOT_PASSWORD=%s", password),
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		PortBindings: map[string][]container.PortBinding{
+			"27017/tcp": {
+				{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", port)},
+			},
+		},
+		RestartPolicy: container.RestartPolicy{
+			Name: "unless-stopped",
+		},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			d.network: {},
+		},
+	}
+
+	// Check if container already exists
+	containers, err := d.dockerClient.ContainerList(ctx, types.ContainerListOptions{All: true})
+	if err != nil {
+		return dto.DatabaseDeployment{}, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	for _, c := range containers {
+		for _, name := range c.Names {
+			if name == "/"+serviceName {
+				log.Printf("🐳 MongoDB container already exists for tenant %s", tenantID)
+				return dto.DatabaseDeployment{
+					ConnectionString: fmt.Sprintf("mongodb://admin:%s@localhost:%d", password, port),
+					Host:            "localhost",
+					Port:            port,
+					Username:        "admin",
+					Password:        password,
+					Database:        "rooms_db",
+					Type:            "mongodb",
+				}, nil
+			}
+		}
+	}
+
+	// Create new container
+	resp, err := d.dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, serviceName)
+	if err != nil {
+		return dto.DatabaseDeployment{}, fmt.Errorf("failed to create MongoDB container: %w", err)
+	}
+
+	// Start container
+	if err := d.dockerClient.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+		return dto.DatabaseDeployment{}, fmt.Errorf("failed to start MongoDB container: %w", err)
+	}
+
+	log.Printf("🐳 Deployed MongoDB for tenant %s on port %d (container: %s)", tenantID, port, resp.ID[:12])
+
+	return dto.DatabaseDeployment{
+		ConnectionString: fmt.Sprintf("mongodb://admin:%s@localhost:%d", password, port),
+		Host:            "localhost",
+		Port:            port,
+		Username:        "admin",
+		Password:        password,
+		Database:        "rooms_db",
+		Type:            "mongodb",
+	}, nil
+}
+
+// DeployCache deploys Redis using real Docker
+func (d *DockerServiceDeployer) DeployCache(ctx context.Context, tenantID string) (dto.CacheDeployment, error) {
+	serviceName := fmt.Sprintf("%s-redis", tenantID)
+	password := generateRandomPassword(32)
+
+	// Ensure network exists
+	if err := d.ensureNetwork(ctx); err != nil {
+		return dto.CacheDeployment{}, err
+	}
+
+	// Pull Redis image if not present
+	log.Printf("🐳 Pulling Redis image...")
+	reader, err := d.dockerClient.ImagePull(ctx, d.redisImage, types.ImagePullOptions{})
+	if err != nil {
+		return dto.CacheDeployment{}, fmt.Errorf("failed to pull Redis image: %w", err)
+	}
+	reader.Close()
+
+	// Create Redis container
+	port := d.basePort + 1000 + 1
+	containerConfig := &container.Config{
+		Image: d.redisImage,
+		Cmd:   []string{"redis-server", "--requirepass", password},
+	}
+
+	hostConfig := &container.HostConfig{
+		PortBindings: map[string][]container.PortBinding{
+			"6379/tcp": {
+				{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", port)},
+			},
+		},
+		RestartPolicy: container.RestartPolicy{
+			Name: "unless-stopped",
+		},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			d.network: {},
+		},
+	}
+
+	// Check if container already exists
+	containers, err := d.dockerClient.ContainerList(ctx, types.ContainerListOptions{All: true})
+	if err != nil {
+		return dto.CacheDeployment{}, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	for _, c := range containers {
+		for _, name := range c.Names {
+			if name == "/"+serviceName {
+				log.Printf("🐳 Redis container already exists for tenant %s", tenantID)
+				return dto.CacheDeployment{
+					ConnectionString: fmt.Sprintf("redis://:%s@localhost:%d/0", password, port),
+					Host:            "localhost",
+					Port:            port,
+					Password:        password,
+					DB:              0,
+					Type:            "redis",
+				}, nil
+			}
+		}
+	}
+
+	// Create new container
+	resp, err := d.dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, serviceName)
+	if err != nil {
+		return dto.CacheDeployment{}, fmt.Errorf("failed to create Redis container: %w", err)
+	}
+
+	// Start container
+	if err := d.dockerClient.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+		return dto.CacheDeployment{}, fmt.Errorf("failed to start Redis container: %w", err)
+	}
+
+	log.Printf("🐳 Deployed Redis for tenant %s on port %d (container: %s)", tenantID, port, resp.ID[:12])
+
+	return dto.CacheDeployment{
+		ConnectionString: fmt.Sprintf("redis://:%s@localhost:%d/0", password, port),
+		Host:            "localhost",
+		Port:            port,
+		Password:        password,
+		DB:              0,
+		Type:            "redis",
+	}, nil
+}
+
+// DeployApplication deploys RoomService using real Docker
+func (d *DockerServiceDeployer) DeployApplication(ctx context.Context, tenantID string, config dto.ApplicationConfig) (dto.ApplicationDeployment, error) {
+	serviceName := tenantID
+
+	// Ensure network exists
+	if err := d.ensureNetwork(ctx); err != nil {
+		return dto.ApplicationDeployment{}, err
+	}
+
+	// Pull RoomService image if not present
+	log.Printf("🐳 Pulling RoomService image...")
+	reader, err := d.dockerClient.ImagePull(ctx, d.appImage, types.ImagePullOptions{})
+	if err != nil {
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to pull RoomService image: %w", err)
+	}
+	reader.Close()
+
+	// Create RoomService container
+	port := d.basePort + 2000 + 1
+	containerConfig := &container.Config{
+		Image: d.appImage,
+		Env: []string{
+			fmt.Sprintf("MONGO_URL=%s", config.Environment["MONGO_URL"]),
+			fmt.Sprintf("REDIS_URL=%s", config.Environment["REDIS_URL"]),
+			fmt.Sprintf("TENANT_ID=%s", tenantID),
+		},
+	}
+
+	hostConfig := &container.HostConfig{
+		PortBindings: map[string][]container.PortBinding{
+			"50051/tcp": {
+				{HostIP: "0.0.0.0", HostPort: fmt.Sprintf("%d", port)},
+			},
+		},
+		RestartPolicy: container.RestartPolicy{
+			Name: "unless-stopped",
+		},
+	}
+
+	networkingConfig := &network.NetworkingConfig{
+		EndpointsConfig: map[string]*network.EndpointSettings{
+			d.network: {},
+		},
+	}
+
+	// Check if container already exists
+	containers, err := d.dockerClient.ContainerList(ctx, types.ContainerListOptions{All: true})
+	if err != nil {
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	for _, c := range containers {
+		for _, name := range c.Names {
+			if name == "/"+serviceName {
+				log.Printf("🐳 RoomService container already exists for tenant %s", tenantID)
+				return dto.ApplicationDeployment{
+					Endpoint: fmt.Sprintf("localhost:%d", port),
+					Host:     "localhost",
+					Port:     port,
+					Status:   "healthy",
+				}, nil
+			}
+		}
+	}
+
+	// Create new container
+	resp, err := d.dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, networkingConfig, nil, serviceName)
+	if err != nil {
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to create RoomService container: %w", err)
+	}
+
+	// Start container
+	if err := d.dockerClient.ContainerStart(ctx, resp.ID, types.ContainerStartOptions{}); err != nil {
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to start RoomService container: %w", err)
+	}
+
+	log.Printf("🐳 Deployed RoomService for tenant %s on port %d (container: %s)", tenantID, port, resp.ID[:12])
+
+	return dto.ApplicationDeployment{
+		Endpoint: fmt.Sprintf("localhost:%d", port),
+		Host:     "localhost",
+		Port:     port,
+		Status:   "healthy",
+	}, nil
+}
+
+// CheckHealth checks if all services for a tenant are healthy
+func (d *DockerServiceDeployer) CheckHealth(ctx context.Context, tenantID string) (bool, error) {
+	serviceNames := []string{
+		fmt.Sprintf("%s-mongo", tenantID),
+		fmt.Sprintf("%s-redis", tenantID),
+		tenantID,
+	}
+
+	containers, err := d.dockerClient.ContainerList(ctx, types.ContainerListOptions{All: false})
+	if err != nil {
+		return false, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	healthyCount := 0
+	for _, serviceName := range serviceNames {
+		for _, c := range containers {
+			for _, name := range c.Names {
+				if name == "/"+serviceName {
+					if c.State == "running" {
+						healthyCount++
+					}
+					break
+				}
+			}
+		}
+	}
+
+	return healthyCount == len(serviceNames), nil
+}
+
+// DeleteServices removes all services for a tenant
+func (d *DockerServiceDeployer) DeleteServices(ctx context.Context, tenantID string) error {
+	serviceNames := []string{
+		fmt.Sprintf("%s-mongo", tenantID),
+		fmt.Sprintf("%s-redis", tenantID),
+		tenantID,
+	}
+
+	containers, err := d.dockerClient.ContainerList(ctx, types.ContainerListOptions{All: true})
+	if err != nil {
+		return fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	for _, serviceName := range serviceNames {
+		for _, c := range containers {
+			for _, name := range c.Names {
+				if name == "/"+serviceName {
+					log.Printf("🐳 Stopping and removing container: %s (%s)", serviceName, c.ID[:12])
+
+					// Stop container
+					timeout := 10 * time.Second
+					if err := d.dockerClient.ContainerStop(ctx, c.ID, &timeout); err != nil {
+						log.Printf("⚠️  Failed to stop container %s: %v", c.ID[:12], err)
+					}
+
+					// Remove container
+					if err := d.dockerClient.ContainerRemove(ctx, c.ID, types.ContainerRemoveOptions{}); err != nil {
+						log.Printf("⚠️  Failed to remove container %s: %v", c.ID[:12], err)
+					}
+
+					break
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// GetStatus returns the current status of tenant services
+func (d *DockerServiceDeployer) GetStatus(ctx context.Context, tenantID string) (dto.DeploymentStatus, error) {
+	serviceNames := []string{
+		fmt.Sprintf("%s-mongo", tenantID),
+		fmt.Sprintf("%s-redis", tenantID),
+		tenantID,
+	}
+
+	containers, err := d.dockerClient.ContainerList(ctx, types.ContainerListOptions{All: true})
+	if err != nil {
+		return dto.DeploymentStatus{}, fmt.Errorf("failed to list containers: %w", err)
+	}
+
+	var serviceStatuses []dto.ServiceStatus
+	allHealthy := true
+
+	for _, serviceName := range serviceNames {
+		found := false
+		healthy := false
+		status := "not found"
+
+		for _, c := range containers {
+			for _, name := range c.Names {
+				if name == "/"+serviceName {
+					found = true
+					status = c.State
+					healthy = (c.State == "running")
+
+					if !healthy {
+						allHealthy = false
+					}
+
+					// Determine service type
+					serviceType := "application"
+					if len(serviceName) > 5 {
+						switch serviceName[len(serviceName)-5:] {
+						case "-mongo":
+							serviceType = "database"
+						case "-redis":
+							serviceType = "cache"
+						}
+					}
+
+					serviceStatuses = append(serviceStatuses, dto.ServiceStatus{
+						Name:    serviceName,
+						Type:    serviceType,
+						Healthy: healthy,
+						Status:  status,
+					})
+
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+
+		if !found {
+			allHealthy = false
+			serviceStatuses = append(serviceStatuses, dto.ServiceStatus{
+				Name:    serviceName,
+				Type:    "unknown",
+				Healthy: false,
+				Status:  status,
+			})
+		}
+	}
+
+	return dto.DeploymentStatus{
+		TenantID:     tenantID,
+		Healthy:      allHealthy,
+		Services:     serviceStatuses,
+		Provisioning: map[bool]string{true: "healthy", false: "failed"}[allHealthy],
+		CreatedAt:    time.Now().Format(time.RFC3339),
+		UpdatedAt:    time.Now().Format(time.RFC3339),
+	}, nil
+}
+
+// Close closes the Docker client connection
+func (d *DockerServiceDeployer) Close() error {
+	if d.dockerClient != nil {
+		return d.dockerClient.Close()
+	}
+	return nil
+}

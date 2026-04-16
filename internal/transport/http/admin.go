@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/chempik1234/room-service-proxy/internal/ports"
 	"github.com/chempik1234/room-service-proxy/internal/tenant"
 )
 
@@ -22,11 +23,40 @@ type AdminAPI struct {
 	authAPI     *AuthAPI
 }
 
-// NewAdminAPI creates a new admin API
-func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string, railwayToken string, railwayProjectID string, railwayEnvironmentID string) (*AdminAPI, error) {
-	// Create tenant service with Railway configuration
-	tenantSvc, err := tenant.NewService(db, railwayToken, railwayProjectID, railwayEnvironmentID)
+// NewAdminAPI creates a new admin API with database URL and deployment provider configuration
+func NewAdminAPI(dbURL string, adminAPIKey string, deploymentProvider string, deploymentConfig map[string]string) (*AdminAPI, error) {
+	// Create database connection for AuthAPI
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	db, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Create tenant service using factory function based on deployment provider
+	var tenantSvc *tenant.Service
+	switch deploymentProvider {
+	case "railway":
+		railwayToken := deploymentConfig["railway_token"]
+		railwayProjectID := deploymentConfig["railway_project_id"]
+		railwayEnvironmentID := deploymentConfig["railway_environment_id"]
+		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndRailway(dbURL, railwayToken, railwayProjectID, railwayEnvironmentID)
+	case "yandex":
+		yandexFolderID := deploymentConfig["yandex_folder_id"]
+		yandexZone := deploymentConfig["yandex_zone"]
+		yandexServiceAccountKey := deploymentConfig["yandex_service_account_key"]
+		yandexSSHKeyPath := deploymentConfig["yandex_ssh_key_path"]
+		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndYandex(dbURL, yandexFolderID, yandexZone, yandexServiceAccountKey, yandexSSHKeyPath)
+	case "docker":
+		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndDocker(dbURL)
+	default:
+		db.Close()
+		return nil, fmt.Errorf("unknown deployment provider: %s", deploymentProvider)
+	}
+
+	if err != nil {
+		db.Close()
 		return nil, fmt.Errorf("failed to create tenant service: %w", err)
 	}
 
@@ -172,13 +202,13 @@ func (api *AdminAPI) createTenant(c *gin.Context) {
 
 // listTenants lists all tenants (or user's tenants if not admin)
 func (api *AdminAPI) listTenants(c *gin.Context) {
-	repo := tenant.NewRepository(api.db)
+	storage := api.tenantSvc.GetStorage()
 
 	// Check if user is admin or regular user
 	authType := c.GetString("authType")
 	if authType == "admin" {
 		// Admin can see all tenants
-		tenants, err := repo.List(c.Request.Context())
+		tenants, err := storage.ListTenants(c.Request.Context())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -191,7 +221,7 @@ func (api *AdminAPI) listTenants(c *gin.Context) {
 	} else {
 		// Regular user can only see their own tenants
 		user := c.MustGet("user").(*User)
-		tenants, err := repo.ListByUserID(c.Request.Context(), user.ID)
+		tenants, err := storage.ListTenantsByUserID(c.Request.Context(), user.ID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -208,8 +238,8 @@ func (api *AdminAPI) listTenants(c *gin.Context) {
 func (api *AdminAPI) getTenant(c *gin.Context) {
 	id := c.Param("id")
 
-	repo := tenant.NewRepository(api.db)
-	tenant, err := repo.GetByID(c.Request.Context(), id)
+	storage := api.tenantSvc.GetStorage()
+	tenant, err := storage.GetTenant(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Tenant not found"})
 		return
@@ -251,8 +281,8 @@ func (api *AdminAPI) updateTenant(c *gin.Context) {
 		return
 	}
 
-	repo := tenant.NewRepository(api.db)
-	existing, err := repo.GetByID(c.Request.Context(), id)
+	storage := api.tenantSvc.GetStorage()
+	existing, err := storage.GetTenant(c.Request.Context(), id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Tenant not found"})
 		return
@@ -284,7 +314,7 @@ func (api *AdminAPI) updateTenant(c *gin.Context) {
 		existing.MaxRPS = req.MaxRPS
 	}
 
-	if err := repo.Update(c.Request.Context(), existing); err != nil {
+	if err := storage.UpdateTenant(c.Request.Context(), existing); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -306,8 +336,8 @@ func (api *AdminAPI) deleteTenant(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	repo := tenant.NewRepository(api.db)
-	if err := repo.Delete(ctx, id); err != nil {
+	storage := api.tenantSvc.GetStorage()
+	if err := storage.DeleteTenant(ctx, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete tenant: %v", err)})
 		return
 	}
@@ -329,8 +359,8 @@ func (api *AdminAPI) regenerateAPIKey(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 	defer cancel()
 
-	repo := tenant.NewRepository(api.db)
-	newAPIKey, err := repo.RegenerateAPIKey(ctx, id)
+	storage := api.tenantSvc.GetStorage()
+	newAPIKey, err := storage.RegenerateAPIKey(ctx, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to regenerate API key: %v", err)})
 		return
@@ -369,8 +399,8 @@ func (api *AdminAPI) status(c *gin.Context) {
 	}
 
 	// Get tenant count
-	repo := tenant.NewRepository(api.db)
-	tenants, err := repo.List(c.Request.Context())
+	storage := api.tenantSvc.GetStorage()
+	tenants, err := storage.ListTenants(c.Request.Context())
 	if err == nil {
 		status["tenant_count"] = len(tenants)
 	}
@@ -389,16 +419,16 @@ func (api *AdminAPI) status(c *gin.Context) {
 
 // getStats returns statistics for the dashboard
 func (api *AdminAPI) getStats(c *gin.Context) {
-	repo := tenant.NewRepository(api.db)
+	storage := api.tenantSvc.GetStorage()
 
-	var tenants []*tenant.Tenant
+	var tenants []*ports.Tenant
 	var err error
 
 	// Check if user is admin or regular user
 	authType := c.GetString("authType")
 	if authType == "admin" {
 		// Admin can see stats for all tenants
-		tenants, err = repo.List(c.Request.Context())
+		tenants, err = storage.ListTenants(c.Request.Context())
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -406,7 +436,7 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 	} else {
 		// Regular user can only see stats for their own tenants
 		user := c.MustGet("user").(*User)
-		tenants, err = repo.ListByUserID(c.Request.Context(), user.ID)
+		tenants, err = storage.ListTenantsByUserID(c.Request.Context(), user.ID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -484,8 +514,8 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 		user := c.MustGet("user").(*User)
 
 		// Get user's tenants
-		repo := tenant.NewRepository(api.db)
-		tenants, err := repo.ListByUserID(c.Request.Context(), user.ID)
+		storage := api.tenantSvc.GetStorage()
+		tenants, err := storage.ListTenantsByUserID(c.Request.Context(), user.ID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

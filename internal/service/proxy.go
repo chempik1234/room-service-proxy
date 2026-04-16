@@ -15,8 +15,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
+	"github.com/chempik1234/room-service-proxy/internal/ports"
+	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
-	"github.com/chempik1234/room-service-proxy/internal/tenant"
 )
 
 // Service handles gRPC proxying
@@ -141,18 +142,22 @@ func (s *Service) extractTenantInfo(ctx context.Context) (string, string, error)
 }
 
 // validateTenant validates the tenant and returns tenant info
-func (s *Service) validateTenant(ctx context.Context, apiKey string) (*tenant.Tenant, error) {
+func (s *Service) validateTenant(ctx context.Context, apiKey string) (*ports.Tenant, error) {
 	if !s.config.EnableAuth {
 		// Return a default tenant when auth is disabled (for testing)
-		return &tenant.Tenant{
+		return &ports.Tenant{
 			ID:     "default",
 			Status: "active",
 			MaxRPS: s.config.RateLimitRPS,
 		}, nil
 	}
 
-	tenantRepo := tenant.NewRepository(s.db)
-	tenant, err := tenantRepo.GetByAPIKey(ctx, apiKey)
+	tenantRepo, err := adapters.NewPostgresTenantStorage(s.db)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "Failed to create tenant repository")
+	}
+
+	tenant, err := tenantRepo.GetTenantByAPIKey(ctx, apiKey)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "Invalid API key")
 	}
@@ -166,7 +171,7 @@ func (s *Service) validateTenant(ctx context.Context, apiKey string) (*tenant.Te
 
 // forwardUnary forwards a unary request to the tenant instance
 // For shared instance deployment, this routes to a single backend
-func (s *Service) forwardUnary(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, tenant *tenant.Tenant, handler grpc.UnaryHandler) (interface{}, error) {
+func (s *Service) forwardUnary(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, tenant *ports.Tenant, handler grpc.UnaryHandler) (interface{}, error) {
 	// In shared instance mode, the handler directly processes the request
 	// No connection forwarding needed - tenant isolation happens in the handler
 
@@ -183,7 +188,7 @@ func (s *Service) forwardUnary(ctx context.Context, req interface{}, info *grpc.
 
 // forwardStream forwards a streaming request to the tenant instance
 // For shared instance deployment, this routes to a single backend
-func (s *Service) forwardStream(ctx context.Context, srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, tenant *tenant.Tenant, handler grpc.StreamHandler) error {
+func (s *Service) forwardStream(ctx context.Context, srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, tenant *ports.Tenant, handler grpc.StreamHandler) error {
 	// In shared instance mode, the handler directly processes the request
 	// No connection forwarding needed - tenant isolation happens in the handler
 

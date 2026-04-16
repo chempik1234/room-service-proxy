@@ -8,32 +8,28 @@ import (
 
 	"github.com/chempik1234/room-service-proxy/internal/dto"
 	"github.com/chempik1234/room-service-proxy/internal/ports"
-	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Service handles tenant business logic
 type Service struct {
-	db                *pgxpool.Pool
-	deployer          ports.ServiceDeployer // Service deployment port
-	provisioningQueue chan *Tenant          // Queue for async provisioning
+	storage           ports.TenantStorage     // Tenant storage port
+	deployer          ports.ServiceDeployer   // Service deployment port
+	provisioningQueue chan *ports.Tenant            // Queue for async provisioning
 }
 
-// NewService creates a new tenant service with Railway configuration
-func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string, railwayEnvironmentID string) (*Service, error) {
-	// Create Railway deployer with provided credentials
-	var deployer ports.ServiceDeployer
-	if railwayToken != "" && railwayProjectID != "" && railwayEnvironmentID != "" {
-		deployer = adapters.NewRailwayServiceDeployer(railwayToken, railwayProjectID, railwayEnvironmentID)
-	} else {
-		// Fall back to Docker for local development
-		deployer = adapters.NewDockerServiceDeployer()
+// NewService creates a new tenant service with storage and deployer interfaces
+func NewService(storage ports.TenantStorage, deployer ports.ServiceDeployer) (*Service, error) {
+	if storage == nil {
+		return nil, fmt.Errorf("storage cannot be nil")
+	}
+	if deployer == nil {
+		return nil, fmt.Errorf("deployer cannot be nil")
 	}
 
 	service := &Service{
-		db:                db,
+		storage:           storage,
 		deployer:          deployer,
-		provisioningQueue: make(chan *Tenant, 100),
+		provisioningQueue: make(chan *ports.Tenant, 100),
 	}
 
 	// Start background provisioning worker
@@ -42,53 +38,60 @@ func NewService(db *pgxpool.Pool, railwayToken string, railwayProjectID string, 
 	return service, nil
 }
 
+// GetStorage returns the tenant storage interface
+func (s *Service) GetStorage() ports.TenantStorage {
+	return s.storage
+}
+
+// GetDeployer returns the service deployer interface
+func (s *Service) GetDeployer() ports.ServiceDeployer {
+	return s.deployer
+}
+
 // ProvisioningJob represents a tenant provisioning job
 type ProvisioningJob struct {
-	Tenant  *Tenant
+	Tenant  *ports.Tenant
 	Context context.Context
 	Error   error
 }
 
-// CreateTenantWithProvisioning creates a new tenant and provisions Railway services
-func (s *Service) CreateTenantWithProvisioning(ctx context.Context, req *CreateTenantRequest) (*Tenant, error) {
+// CreateTenantWithProvisioning creates a new tenant and provisions services
+func (s *Service) CreateTenantWithProvisioning(ctx context.Context, req *CreateTenantRequest) (*ports.Tenant, error) {
 	// Create tenant record first
-	tenant := &Tenant{
+	tenant := &ports.Tenant{
 		UserID: req.UserID,
 		Name:   req.Name,
 		Email:  req.Email,
 		Plan:   req.Plan,
 	}
 
-	repo := NewRepository(s.db)
-	if err := repo.Create(ctx, tenant); err != nil {
+	if err := s.storage.CreateTenant(ctx, tenant); err != nil {
 		return nil, fmt.Errorf("failed to create tenant: %w", err)
 	}
 
 	// Provision tenant services
-	if s.deployer != nil {
-		provisionedProject, err := s.provisionTenantServices(ctx, tenant)
-		if err != nil {
-			// Rollback tenant creation
-			repo.Delete(ctx, tenant.ID)
-			return nil, fmt.Errorf("failed to provision tenant services: %w", err)
-		}
+	provisionedProject, err := s.provisionTenantServices(ctx, tenant)
+	if err != nil {
+		// Rollback tenant creation
+		s.storage.DeleteTenant(ctx, tenant.ID)
+		return nil, fmt.Errorf("failed to provision tenant services: %w", err)
+	}
 
-		// Update tenant with service info
-		tenant.Host = provisionedProject.Host
-		tenant.Port = provisionedProject.Port
+	// Update tenant with service info
+	tenant.Host = provisionedProject.Host
+	tenant.Port = provisionedProject.Port
 
-		if err := repo.Update(ctx, tenant); err != nil {
-			return nil, fmt.Errorf("failed to update tenant: %w", err)
-		}
+	if err := s.storage.UpdateTenant(ctx, tenant); err != nil {
+		return nil, fmt.Errorf("failed to update tenant: %w", err)
 	}
 
 	return tenant, nil
 }
 
 // CreateTenantAsync creates a new tenant and queues async provisioning
-func (s *Service) CreateTenantAsync(ctx context.Context, req *CreateTenantRequest) (*Tenant, error) {
+func (s *Service) CreateTenantAsync(ctx context.Context, req *CreateTenantRequest) (*ports.Tenant, error) {
 	// Create tenant record first
-	tenant := &Tenant{
+	tenant := &ports.Tenant{
 		UserID:            req.UserID,
 		Name:              req.Name,
 		Email:             req.Email,
@@ -97,8 +100,7 @@ func (s *Service) CreateTenantAsync(ctx context.Context, req *CreateTenantReques
 		ProvisioningStatus: "pending",
 	}
 
-	repo := NewRepository(s.db)
-	if err := repo.Create(ctx, tenant); err != nil {
+	if err := s.storage.CreateTenant(ctx, tenant); err != nil {
 		return nil, fmt.Errorf("failed to create tenant: %w", err)
 	}
 
@@ -135,14 +137,13 @@ func (s *Service) provisioningWorker() {
 		}
 
 		// Update tenant with service info
-		repo := NewRepository(s.db)
 		tenant.Host = provisionedProject.Host
 		tenant.Port = provisionedProject.Port
 		tenant.Status = "active"
 		tenant.ProvisioningStatus = "ready"
 		tenant.ProvisioningError = ""
 
-		if err := repo.Update(ctx, tenant); err != nil {
+		if err := s.storage.UpdateTenant(ctx, tenant); err != nil {
 			log.Printf("Failed to update tenant %s: %v", tenant.ID, err)
 			s.updateTenantStatus(tenant.ID, "failed", fmt.Sprintf("Failed to update tenant: %v", err))
 			continue
@@ -155,9 +156,8 @@ func (s *Service) provisioningWorker() {
 // updateTenantStatus updates tenant provisioning status
 func (s *Service) updateTenantStatus(tenantID, status, errorMsg string) {
 	ctx := context.Background()
-	repo := NewRepository(s.db)
 
-	tenant, err := repo.GetByID(ctx, tenantID)
+	tenant, err := s.storage.GetTenant(ctx, tenantID)
 	if err != nil {
 		log.Printf("Failed to get tenant %s for status update: %v", tenantID, err)
 		return
@@ -169,33 +169,32 @@ func (s *Service) updateTenantStatus(tenantID, status, errorMsg string) {
 		tenant.Status = "provisioning_failed"
 	}
 
-	if err := repo.Update(ctx, tenant); err != nil {
+	if err := s.storage.UpdateTenant(ctx, tenant); err != nil {
 		log.Printf("Failed to update tenant %s status: %v", tenantID, err)
 	}
 }
 
 // GetTenantProvisioningStatus returns detailed provisioning status
 func (s *Service) GetTenantProvisioningStatus(ctx context.Context, tenantID string) (map[string]interface{}, error) {
-	repo := NewRepository(s.db)
-	tenant, err := repo.GetByID(ctx, tenantID)
+	tenant, err := s.storage.GetTenant(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
 
 	return map[string]interface{}{
-		"tenant_id":          tenant.ID,
-		"status":             tenant.Status,
+		"tenant_id":           tenant.ID,
+		"status":              tenant.Status,
 		"provisioning_status": tenant.ProvisioningStatus,
 		"provisioning_error":  tenant.ProvisioningError,
-		"host":               tenant.Host,
-		"port":               tenant.Port,
-		"created_at":         tenant.CreatedAt,
-		"updated_at":         tenant.UpdatedAt,
+		"host":                tenant.Host,
+		"port":                tenant.Port,
+		"created_at":          tenant.CreatedAt,
+		"updated_at":          tenant.UpdatedAt,
 	}, nil
 }
 
 // provisionTenantServices provisions a complete project for a tenant using the configured deployer
-func (s *Service) provisionTenantServices(ctx context.Context, tenant *Tenant) (*ProvisionedProject, error) {
+func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Tenant) (*ProvisionedProject, error) {
 	// Deploy database
 	mongoDeployment, err := s.deployer.DeployDatabase(ctx, tenant.ID)
 	if err != nil {
@@ -305,37 +304,4 @@ type CreateTenantRequest struct {
 	Name   string `json:"name"`
 	Email  string `json:"email"`
 	Plan   string `json:"plan"` // free, pro, enterprise
-}
-
-// StorePassword securely stores a password for a tenant service
-func (s *Service) StorePassword(ctx context.Context, tenantID, serviceType, password string) error {
-	query := `
-		INSERT INTO tenant_passwords (tenant_id, service_type, password, created_at)
-		VALUES ($1, $2, $3, NOW())
-		ON CONFLICT (tenant_id, service_type) DO UPDATE
-		SET password = $3, updated_at = NOW()
-	`
-
-	_, err := s.db.Exec(ctx, query, tenantID, serviceType, password)
-	if err != nil {
-		return fmt.Errorf("failed to store password: %w", err)
-	}
-
-	return nil
-}
-
-// GetPassword retrieves a password for a tenant service
-func (s *Service) GetPassword(ctx context.Context, tenantID, serviceType string) (string, error) {
-	var password string
-	query := `
-		SELECT password FROM tenant_passwords
-		WHERE tenant_id = $1 AND service_type = $2
-	`
-
-	err := s.db.QueryRow(ctx, query, tenantID, serviceType).Scan(&password)
-	if err != nil {
-		return "", fmt.Errorf("failed to get password: %w", err)
-	}
-
-	return password, nil
 }
