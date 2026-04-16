@@ -45,7 +45,7 @@ jobs:
           # Setup environment from host variables
           echo "Setting up environment..."
           cat > .env << EOF
-          DATABASE_URL=${DATABASE_URL}
+          DATABASE_URL=${DATABASE_URL:-postgresql://room_service_proxy:big_chungus@roomservice-postgres:5432/room_service_proxy}
           GRPC_PORT=${GRPC_PORT:-50051}
           RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-100}
           RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60s}
@@ -57,12 +57,28 @@ jobs:
           DEPLOYMENT_PROVIDER=${DEPLOYMENT_PROVIDER:-yandex}
           YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
           YANDEX_ZONE=${YANDEX_ZONE}
-          YANDEX_SERVICE_ACCOUNT_KEY=${YANDEX_SERVICE_ACCOUNT_KEY}
-          YANDEX_SSH_KEY_PATH=${YANDEX_SSH_KEY_PATH}
+          YANDEX_SERVICE_ACCOUNT_KEY=/app/keys/yandex-service-account-key.json
+          YANDEX_SSH_KEY_PATH=/app/keys/yandex_provisioning_key
           POSTGRES_DB=${POSTGRES_DB:-room_service_proxy}
           POSTGRES_USER=${POSTGRES_USER:-room_service_proxy}
           POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
           EOF
+
+          # Create keys directory and upload key files
+          echo "Setting up key files..."
+          mkdir -p keys
+
+          # Upload service account key (from GitHub Secret)
+          echo "${{ secrets.YANDEX_SERVICE_ACCOUNT_KEY }}" > keys/yandex-service-account-key.json
+
+          # Upload SSH keys (from GitHub Secret)
+          echo "${{ secrets.YANDEX_PROVISIONING_SSH_KEY }}" > keys/yandex_provisioning_key
+          echo "${{ secrets.YANDEX_PROVISIONING_SSH_KEY_PUB }}" > keys/yandex_provisioning_key.pub
+
+          # Set proper permissions
+          chmod 600 keys/yandex-service-account-key.json
+          chmod 600 keys/yandex_provisioning_key
+          chmod 644 keys/yandex_provisioning_key.pub
 
           # Stop existing services
           echo "Stopping existing services..."
