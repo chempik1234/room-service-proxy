@@ -1,41 +1,110 @@
-name: Deploy to Yandex Cloud
+name: Build and Deploy Docker Image
 
 on:
   push:
     branches: [ master ]
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Deploy to Yandex Cloud
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: false
+        tags: roomservice-proxy:latest
+        outputs: type=docker,dest=/tmp/roomservice-proxy.tar
+
+    - name: Save image to file
+      run: |
+        ls -lh /tmp/roomservice-proxy.tar
+
+    - name: Deploy to Yandex Cloud VM
       uses: appleboy/ssh-action@master
       with:
         host: ${{ secrets.YANDEK_HOST }}
         username: ${{ secrets.YANDEK_USER }}
         key: ${{ secrets.YANDEK_SSH_KEY }}
         script: |
-          # Stop existing service
-          sudo systemctl stop roomservice-proxy || true
+          # Create working directory if it doesn't exist
+          mkdir -p ~/roomservice
+          cd ~/roomservice
 
-          # Download and deploy new binary
-          wget -O /tmp/roomservice-proxy.tar.gz https://github.com/${{ github.repository }}/releases/latest/download/roomservice-proxy-linux-amd64.tar.gz
-          tar -xzf /tmp/roomservice-proxy.tar.gz -C /opt/roomservice-proxy
+          # Stop and remove existing container
+          docker stop roomservice-proxy || true
+          docker rm roomservice-proxy || true
 
-          # Update configuration if needed
-          # sudo cp /tmp/config.yaml /etc/roomservice-proxy/config.yaml
+          # Create .env file if it doesn't exist
+          if [ ! -f .env ]; then
+            cat > .env << 'EOF'
+          DATABASE_URL=postgresql://room_service_proxy:big_chungus@localhost:5432/room_service_proxy
+          GRPC_PORT=50051
+          RATE_LIMIT_RPS=100
+          RATE_LIMIT_WINDOW=60s
+          RATE_LIMIT_BURST=10
+          ADMIN_PORT=8080
+          ADMIN_API_KEY=461cc4ffbcc68784d21dfb0cab66fb703afe1093e1d620d7f8cf8be66e618d87
+          ENABLE_AUTH=true
+          ENABLE_RATE_LIMIT=true
+          DEPLOYMENT_PROVIDER=docker
+          EOF
+          fi
 
-          # Start service
-          sudo systemctl start roomservice-proxy
+          # Load and run the new image (will be uploaded in next step)
+          echo "Ready to receive new Docker image"
 
-          # Check status
-          sudo systemctl status roomservice-proxy
+    - name: Upload Docker image to VM
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.YANDEK_HOST }}
+        username: ${{ secrets.YANDEK_USER }}
+        key: ${{ secrets.YANDEK_SSH_KEY }}
+        source: "/tmp/roomservice-proxy.tar"
+        target: "~/roomservice/"
+
+    - name: Start new container
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.YANDEK_HOST }}
+        username: ${{ secrets.YANDEK_USER }}
+        key: ${{ secrets.YANDEK_SSH_KEY }}
+        script: |
+          cd ~/roomservice
+
+          # Load the new Docker image
+          docker load -i roomservice-proxy.tar
+
+          # Run the new container
+          docker run -d \
+            --name roomservice-proxy \
+            --restart always \
+            -p 50051:50051 \
+            -p 8080:8080 \
+            --env-file .env \
+            --link roomservice-postgres:postgres \
+            roomservice-proxy:latest
+
+          # Clean up old images
+          docker image prune -f
+
+          # Wait for container to start
+          sleep 5
+
+          # Check container status
+          docker ps | grep roomservice-proxy
+
+          # Health check
           curl -f http://localhost:8080/health || exit 1
 
-    - name: Notify on success
-      if: success()
-      run: echo "✅ Deployment successful!"
+          echo "✅ Deployment successful!"
 
     - name: Notify on failure
       if: failure()
