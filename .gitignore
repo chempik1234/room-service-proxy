@@ -49,6 +49,7 @@ temp/
 # Yandex Cloud credentials
 yandex-service-account-key.json
 yandex_roomservice_key*
+yandex_provisioning_key*
 ssh_keys.txt
 yandex_key
 yandex_key.pub
