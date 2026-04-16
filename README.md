@@ -1,56 +1,58 @@
 # RoomService Proxy
 
-Smart proxy service for RoomService SaaS platform. Routes requests to tenant instances based on API keys with rate limiting and authentication.
+Smart multi-tenant proxy service for RoomService SaaS platform. Routes requests to tenant instances based on API keys with rate limiting, authentication, and support for multiple deployment providers.
 
 ## 🚀 Features
 
+- **Multi-Provider Deployment**: Support for Railway, Yandex Cloud, and Docker
+- **Unified Architecture**: Clean ports/adapters pattern for storage and deployment
 - **API Key Authentication**: Secure tenant identification
 - **Rate Limiting**: Per-tenant request rate limiting (configurable RPS)
 - **Tenant Management**: CRUD operations for tenant management
 - **Request Proxying**: Routes gRPC requests to tenant instances
 - **Admin API**: HTTP API for tenant management
-- **Database**: PostgreSQL for tenant storage
-- **Monitoring**: Request logging and usage statistics
+- **Automated Deployment**: GitHub Actions + Taskfile for CI/CD
+- **Docker Compose**: Easy local development and production deployment
 
 ## 📦 Quick Start
 
 ### Prerequisites
 
-- Go 1.21+
-- PostgreSQL 14+
-- Railway account (for tenant instances)
+- Go 1.25+ (for local development)
+- Docker & Docker Compose
+- Task (taskfile.dev)
+- Deployment provider account (Railway/Yandex Cloud)
 
-### Installation
+### Quick Deployment (Docker Compose)
 
-1. **Clone the repository**
 ```bash
+# Clone the repository
 git clone https://github.com/chempik1234/room-service-proxy.git
 cd room-service-proxy
+
+# Install Task
+sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
+
+# Deploy everything
+task deploy
+
+# Check status
+task status
 ```
 
-2. **Install dependencies**
-```bash
-go mod download
-```
+### Manual Deployment
 
-3. **Set up database**
 ```bash
-# Create database
-createdb roomservice_proxy
-
-# Run schema
-psql roomservice_proxy < schema.sql
-```
-
-4. **Configure environment**
-```bash
+# Set up environment
 cp .env.example .env
 # Edit .env with your configuration
-```
 
-5. **Run**
-```bash
-go run main.go
+# Build and run
+docker-compose up -d
+
+# Or run locally
+go mod download
+go run cmd/proxy/main.go
 ```
 
 ## ⚙️ Configuration
@@ -58,7 +60,7 @@ go run main.go
 ### Environment Variables
 
 ```bash
-# Database
+# Database (Required)
 DATABASE_URL=postgresql://user:password@localhost:5432/roomservice_proxy
 
 # gRPC Server
@@ -77,14 +79,94 @@ ADMIN_API_KEY=your_secret_key
 ENABLE_AUTH=true
 ENABLE_RATE_LIMIT=true
 
-# Railway (for auto-provisioning)
+# Deployment Provider (Required: "railway", "yandex", or "docker")
+DEPLOYMENT_PROVIDER=docker
+
+# Yandex Cloud (if using Yandex provider)
+YANDEX_FOLDER_ID=your_folder_id
+YANDEX_ZONE=ru-central1-a
+YANDEX_SERVICE_ACCOUNT_KEY=/path/to/key.json
+YANDEX_SSH_KEY_PATH=/path/to/ssh/key
+
+# Railway (if using Railway provider)
 RAILWAY_TOKEN=your_railway_token
 RAILWAY_PROJECT_ID=your_project_id
+RAILWAY_ENVIRONMENT_ID=your_environment_id
+```
+
+## 🏗️ Architecture
+
+### Unified Ports & Adapters
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   RoomService Proxy                      │
+├─────────────────────────────────────────────────────────┤
+│                                                          │
+│  ┌────────────────────────────────────────────────┐    │
+│  │  Tenant Service (Business Logic)              │    │
+│  │  - Uses TenantStorage interface               │    │
+│  │  - Uses ServiceDeployer interface             │    │
+│  └────────────────────────────────────────────────┘    │
+│           │                    │                        │
+│           ▼                    ▼                        │
+│  ┌──────────────────┐  ┌──────────────────┐           │
+│  │  Storage Port    │  │  Deployer Port   │           │
+│  └──────────────────┘  └──────────────────┘           │
+│           │                    │                        │
+│           ▼                    ▼                        │
+│  ┌──────────────────┐  ┌──────────────────┐           │
+│  │  PostgreSQL     │  │  Railway/Yandex  │           │
+│  │  Adapter        │  │  Adapters        │           │
+│  └──────────────────┘  └──────────────────┘           │
+│                                                          │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          │ Routes based on API key
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│              Tenant Instances (Multi-Provider)           │
+│                                                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
+│  │ Railway      │  │ Yandex       │  │ Docker       │ │
+│  │ Containers   │  │ Compute VMs  │  │ Containers   │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘ │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Project Structure
+
+```
+room-service-proxy/
+├── cmd/proxy/              # Application entry point
+├── internal/
+│   ├── config/             # Configuration management
+│   ├── dto/                # Data transfer objects
+│   ├── ports/              # Port interfaces
+│   │   ├── storage.go      # TenantStorage interface
+│   │   └── adapters/       # Storage & deployment adapters
+│   │       ├── postgres_tenant_storage.go
+│   │       ├── yandex_adapter.go
+│   │       └── railway_adapter.go
+│   ├── service/            # gRPC proxy logic
+│   ├── tenant/             # Tenant management
+│   │   ├── service.go      # Tenant service
+│   │   └── factory.go      # Service factory functions
+│   └── transport/http/     # Admin API
+├── docs/                   # Documentation
+│   ├── yandex-deployment.md
+│   └── diagrams/
+├── .github/                # GitHub Actions workflows
+├── Dockerfile              # Docker image
+├── docker-compose.yml      # Multi-container setup
+├── Taskfile.yml            # Task automation
+├── .env.example            # Environment template
+└── README.md               # This file
 ```
 
 ## 📊 API Endpoints
 
-### Admin API (HTTP)
+### Admin API (HTTP:8080)
 
 #### Create Tenant
 ```bash
@@ -95,9 +177,7 @@ Content-Type: application/json
 {
   "name": "Acme Corp",
   "email": "contact@acme.com",
-  "host": "tenant-abc123.up.railway.app",
-  "port": 50051,
-  "plan": "free"
+  "plan": "pro"
 }
 
 Response:
@@ -123,9 +203,7 @@ Response:
       "name": "Acme Corp",
       "email": "contact@acme.com",
       "status": "active",
-      "plan": "free",
-      "max_rooms": 50,
-      "max_rps": 100
+      "plan": "pro"
     }
   ]
 }
@@ -145,9 +223,7 @@ Content-Type: application/json
 
 {
   "name": "Acme Corp Updated",
-  "plan": "pro",
-  "max_rooms": 500,
-  "max_rps": 1000
+  "plan": "enterprise"
 }
 ```
 
@@ -168,7 +244,7 @@ Response:
 }
 ```
 
-### gRPC Proxy
+### gRPC Proxy (Port 50051)
 
 #### Client Request
 ```go
@@ -179,7 +255,7 @@ conn, _ := grpc.Dial("roomservice.io:50051",
         oauth.TokenSource{
             Token: "rs_live_tenant-abc123-xyz789_***",
         },
-    },
+    ),
 )
 
 client := room_service.NewRoomServiceClient(conn)
@@ -188,55 +264,66 @@ client := room_service.NewRoomServiceClient(conn)
 rooms, _ := client.RoomsList(ctx, &empty.Empty{})
 ```
 
-#### How It Works
-1. Client sends gRPC request with API key
-2. Proxy validates API key against database
-3. Proxy checks rate limits for tenant
-4. Proxy forwards request to tenant's RoomService instance
-5. Response is returned to client
+## 🚀 Deployment
 
-## 🏗️ Architecture
+### Local Development (Docker Compose)
 
+```bash
+# Install Task
+curl -sL https://taskfile.dev/install | sh
+
+# Deploy everything
+task deploy
+
+# Useful commands
+task status        # Check service health
+task logs          # View logs
+task rebuild       # Rebuild and restart
+task test          # Test API endpoints
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   RoomService Proxy                      │
-├─────────────────────────────────────────────────────────┤
-│                                                          │
-│  ┌────────────────────────────────────────────────┐    │
-│  │  gRPC Server (:50051)                          │    │
-│  │  - Validates API keys                          │    │
-│  │  - Checks rate limits                          │    │
-│  │  - Routes to tenant instances                  │    │
-│  └────────────────────────────────────────────────┘    │
-│                                                          │
-│  ┌────────────────────────────────────────────────┐    │
-│  │  Admin API (:8080)                             │    │
-│  │  - Create/Read/Update/Delete tenants           │    │
-│  │  - Regenerate API keys                         │    │
-│  │  - View usage stats                            │    │
-│  └────────────────────────────────────────────────┘    │
-│                                                          │
-│  ┌────────────────────────────────────────────────┐    │
-│  │  Database (PostgreSQL)                         │    │
-│  │  - Tenants table                               │    │
-│  │  - Request logs                                │    │
-│  │  - Usage statistics                            │    │
-│  └────────────────────────────────────────────────┘    │
-│                                                          │
-└─────────────────────────────────────────────────────────┘
-                          │
-                          │ Routes based on API key
-                          ▼
-┌─────────────────────────────────────────────────────────┐
-│              Tenant Instances (Railway)                  │
-│                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │ Tenant A     │  │ Tenant B     │  │ Tenant C     │ │
-│  │ RoomService  │  │ RoomService  │  │ RoomService  │ │
-│  │ + MongoDB    │  │ + MongoDB    │  │ + MongoDB    │ │
-│  │ + Redis      │  │ + Redis      │  │ + Redis      │ │
-│  └──────────────┘  └──────────────┘  └──────────────┘ │
-└─────────────────────────────────────────────────────────┘
+
+### Railway Deployment
+
+```bash
+# Configure for Railway
+cp .env.example .env
+# Edit .env with DEPLOYMENT_PROVIDER=railway
+
+# Deploy
+docker-compose up -d
+
+# Or use Railway CLI
+railway up
+```
+
+### Yandex Cloud Deployment
+
+See [docs/yandex-deployment.md](docs/yandex-deployment.md) for detailed Yandex Cloud deployment instructions.
+
+```bash
+# Configure for Yandex
+export DEPLOYMENT_PROVIDER=yandex
+export YANDEX_FOLDER_ID=your_folder_id
+export YANDEX_ZONE=ru-central1-a
+
+# Deploy
+task deploy
+```
+
+### Automated Deployment (GitHub Actions)
+
+Every push to `master` triggers automated deployment:
+
+1. **Build** Docker image
+2. **Deploy** to configured VM
+3. **Health Check** the deployment
+4. **Notifications** on success/failure
+
+**Required GitHub Secrets:**
+```
+YANDEK_HOST = your_vm_ip
+YANDEK_USER = your_username
+YANDEK_SSH_KEY = your_ssh_private_key
 ```
 
 ## 🔐 Security
@@ -244,80 +331,9 @@ rooms, _ := client.RoomsList(ctx, &empty.Empty{})
 - **API Key Authentication**: All requests require valid API key
 - **Rate Limiting**: Per-tenant rate limiting prevents abuse
 - **Admin API**: Separate admin API key for management operations
-- **Database**: Parameterized queries prevent SQL injection
+- **Clean Architecture**: Type-safe interfaces prevent data leakage
+- **Multi-Tenancy**: Complete tenant isolation
 - **TLS**: Support for TLS encryption (configure in production)
-
-## 📈 Monitoring
-
-### Request Logging
-All requests are logged to the database:
-```sql
-SELECT * FROM request_logs
-WHERE tenant_id = 'tenant-abc123'
-  AND created_at > NOW() - INTERVAL '1 hour';
-```
-
-### Usage Statistics
-Tenant usage is tracked daily:
-```sql
-SELECT * FROM usage_stats
-WHERE tenant_id = 'tenant-abc123'
-  AND stat_date = CURRENT_DATE;
-```
-
-### Rate Limiting
-Rate limiting stats per tenant:
-```go
-tokens, lastRefill, exists := limiter.GetStats("tenant-abc123")
-```
-
-## 🚀 Deployment
-
-### Railway Deployment
-
-1. **Create Railway project**
-```bash
-railway new --name roomservice-proxy
-```
-
-2. **Add PostgreSQL**
-```bash
-railway add postgresql
-```
-
-3. **Run schema**
-```bash
-railway connect
-# In psql: \i schema.sql
-```
-
-4. **Set environment variables**
-```bash
-railway variables set DATABASE_URL=postgresql://...
-railway variables set ADMIN_API_KEY=your_secret_key
-railway variables set GRPC_PORT=50051
-railway variables set ADMIN_PORT=8080
-```
-
-5. **Deploy**
-```bash
-railway up
-```
-
-### Docker Deployment
-
-```bash
-# Build image
-docker build -t roomservice-proxy .
-
-# Run container
-docker run -d \
-  -p 50051:50051 \
-  -p 8080:8080 \
-  -e DATABASE_URL=postgresql://... \
-  -e ADMIN_API_KEY=your_secret_key \
-  roomservice-proxy
-```
 
 ## 🧪 Testing
 
@@ -328,43 +344,98 @@ go test ./...
 # Run with coverage
 go test -cover ./...
 
-# Run specific test
-go test -v ./internal/proxy
+# Test API endpoints
+task test
+
+# Test specific service
+go test -v ./internal/service
 ```
 
-## 📝 Development
+## 🛠️ Development
 
-### Project Structure
-```
-room-service-proxy/
-├── main.go                 # Application entry point
-├── internal/
-│   ├── api/                # Admin API
-│   ├── config/             # Configuration
-│   ├── proxy/              # gRPC proxy logic
-│   ├── ratelimit/          # Rate limiting
-│   └── tenant/             # Tenant management
-├── proto/                  # Protocol buffers
-├── schema.sql              # Database schema
-├── Dockerfile              # Docker image
-├── Railway.toml            # Railway config
-├── .env.example            # Environment template
-└── README.md               # This file
+### Task Commands
+
+```bash
+task deploy        # Full deployment
+task build         # Build Docker images
+task up            # Start services
+task down          # Stop services
+task logs          # View logs
+task status        # Check health
+task rebuild       # Rebuild and restart
+task clean         # Remove everything
 ```
 
 ### Adding Features
 
-1. **New tenant field**: Update `Tenant` struct and database schema
-2. **New rate limiting rule**: Update `ratelimit` package
-3. **New admin endpoint**: Add to `api` package
-4. **New proxy logic**: Update `proxy` package
+1. **New deployment provider**: 
+   - Implement `ServiceDeployer` interface in `internal/ports/adapters/`
+   - Add factory function in `internal/tenant/factory.go`
+   - Update `internal/config/config.go`
+
+2. **New storage backend**:
+   - Implement `TenantStorage` interface
+   - Add to factory functions
+
+3. **New admin endpoint**:
+   - Add to `internal/transport/http/admin.go`
+
+## 📈 Monitoring
+
+### Health Check
+```bash
+curl http://localhost:8080/health
+```
+
+### Service Status
+```bash
+task status
+```
+
+### Container Logs
+```bash
+task logs
+task logs:proxy
+task logs:postgres
+```
+
+## 🔧 Troubleshooting
+
+### Docker Issues
+```bash
+# Check Docker version
+docker --version
+
+# Update Docker (if too old)
+sudo apt update && sudo apt install -y docker-ce
+```
+
+### Permission Issues
+```bash
+# Add user to docker group
+sudo usermod -aG docker $USER
+
+# Re-login to apply changes
+```
+
+### Deployment Issues
+```bash
+# Check logs
+task logs
+
+# Rebuild from scratch
+task rebuild
+
+# Clean and restart
+task clean && task deploy
+```
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create feature branch
-3. Commit changes
-4. Push to branch
+2. Create feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
 5. Open Pull Request
 
 ## 📄 License
@@ -373,10 +444,12 @@ MIT License - see LICENSE file for details
 
 ## 🙏 Acknowledgments
 
-- [Railway](https://railway.app) - Easy deployment
+- [Railway](https://railway.app) - Container platform
+- [Yandex Cloud](https://cloud.yandex.com/) - Compute platform
 - [gRPC](https://grpc.io/) - RPC framework
 - [PostgreSQL](https://www.postgresql.org/) - Database
-- [pgx](https://github.com/jackc/pgx) - PostgreSQL driver
+- [Docker](https://www.docker.com/) - Containerization
+- [Task](https://taskfile.dev/) - Task runner
 
 ---
 
