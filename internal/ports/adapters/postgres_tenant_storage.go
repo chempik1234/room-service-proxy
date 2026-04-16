@@ -40,11 +40,10 @@ func NewPostgresTenantStorageFromURL(dbURL string) (*PostgresTenantStorage, erro
 // CreateTenant creates a new tenant
 func (s *PostgresTenantStorage) CreateTenant(ctx context.Context, tenant *ports.Tenant) error {
 	now := time.Now()
-	nowStr := now.Format(time.RFC3339)
 	tenant.ID = generateTenantID(tenant.Name)
 	tenant.APIKey = generateAPIKey(tenant.ID)
-	tenant.CreatedAt = nowStr
-	tenant.UpdatedAt = nowStr
+	tenant.CreatedAt = now
+	tenant.UpdatedAt = now
 
 	// Log tenant creation for debugging
 	fmt.Printf("🆕 Creating tenant: name=%q, id=%s, apiKey=%s\n", tenant.Name, tenant.ID, tenant.APIKey)
@@ -190,7 +189,7 @@ func (s *PostgresTenantStorage) ListTenantsByUserID(ctx context.Context, userID 
 
 // UpdateTenant updates a tenant
 func (s *PostgresTenantStorage) UpdateTenant(ctx context.Context, t *ports.Tenant) error {
-	t.UpdatedAt = time.Now().Format(time.RFC3339)
+	t.UpdatedAt = time.Now()
 
 	query := `
 		UPDATE tenants
