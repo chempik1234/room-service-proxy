@@ -15,9 +15,9 @@ jobs:
     - name: Deploy to Yandex Cloud VM
       uses: appleboy/ssh-action@master
       with:
-        host: ${{ secrets.YANDEK_HOST }}
-        username: ${{ secrets.YANDEK_USER }}
-        key: ${{ secrets.YANDEK_SSH_KEY }}
+        host: ${{ secrets.YANDEX_HOST }}
+        username: ${{ secrets.YANDEX_USER }}
+        key: ${{ secrets.YANDEX_SSH_KEY }}
         script: |
           # Create working directory if it doesn't exist
           mkdir -p ~/roomservice

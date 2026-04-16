@@ -321,9 +321,9 @@ Every push to `master` triggers automated deployment:
 
 **Required GitHub Secrets:**
 ```
-YANDEK_HOST = your_vm_ip
-YANDEK_USER = your_username
-YANDEK_SSH_KEY = your_ssh_private_key
+YANDEX_HOST = your_vm_ip
+YANDEX_USER = your_username
+YANDEX_SSH_KEY = your_ssh_private_key
 ```
 
 ## 🔐 Security
