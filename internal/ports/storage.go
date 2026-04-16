@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"time"
 )
 
 // Tenant represents a tenant in the system
@@ -20,8 +21,8 @@ type Tenant struct {
 	Plan              string `json:"plan"`   // free, pro, enterprise
 	MaxRooms          int    `json:"max_rooms"`
 	MaxRPS            int    `json:"max_rps"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // TenantStorage defines the port for tenant data storage operations
