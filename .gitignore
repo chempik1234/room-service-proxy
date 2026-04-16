@@ -50,3 +50,5 @@ temp/
 yandex-service-account-key.json
 yandex_roomservice_key*
 ssh_keys.txt
+yandex_key
+yandex_key.pub
