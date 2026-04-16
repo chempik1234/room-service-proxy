@@ -324,6 +324,15 @@ Every push to `master` triggers automated deployment:
 YANDEX_HOST = your_vm_ip
 YANDEX_USER = your_username
 YANDEX_SSH_KEY = your_ssh_private_key
+
+# Yandex Deployment Environment Variables
+DATABASE_URL = postgresql://room_service_proxy:password@localhost:5432/room_service_proxy
+ADMIN_API_KEY = your_admin_api_key
+YANDEX_FOLDER_ID = your_yandex_folder_id
+YANDEX_ZONE = ru-central1-a
+YANDEX_SERVICE_ACCOUNT_KEY = /path/to/service-account-key.json
+YANDEX_SSH_KEY_PATH = /path/to/ssh/key
+POSTGRES_PASSWORD = your_postgres_password
 ```
 
 ## 🔐 Security
