@@ -1,0 +1,172 @@
+version: '3'
+
+vars:
+  GREETING: "Hello, World!"
+  PROXY_CONTAINER: "roomservice-proxy"
+  POSTGRES_CONTAINER: "roomservice-postgres"
+
+tasks:
+  default:
+    cmds:
+      - task -l
+
+  deps:
+    desc: Install dependencies
+    cmds:
+      - echo "Installing Docker and Docker Compose..."
+      - sudo apt update
+      - sudo apt install -y docker.io docker-compose
+      - sudo systemctl start docker
+      - sudo systemctl enable docker
+      - sudo usermod -aG docker $USER
+      - echo "✅ Dependencies installed"
+
+  env:setup:
+    desc: Setup environment file from host environment
+    cmds:
+      - |
+        cat > .env << EOF
+        DATABASE_URL=${DATABASE_URL:-postgresql://room_service_proxy:big_chungus@roomservice-postgres:5432/room_service_proxy}
+        GRPC_PORT=${GRPC_PORT:-50051}
+        RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-100}
+        RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60s}
+        RATE_LIMIT_BURST=${RATE_LIMIT_BURST:-10}
+        ADMIN_PORT=${ADMIN_PORT:-8080}
+        ADMIN_API_KEY=${ADMIN_API_KEY:-461cc4ffbcc68784d21dfb0cab66fb703afe1093e1d620d7f8cf8be66e618d87}
+        ENABLE_AUTH=${ENABLE_AUTH:-true}
+        ENABLE_RATE_LIMIT=${ENABLE_RATE_LIMIT:-true}
+        DEPLOYMENT_PROVIDER=${DEPLOYMENT_PROVIDER:-yandex}
+        YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+        YANDEX_ZONE=${YANDEX_ZONE}
+        POSTGRES_DB=${POSTGRES_DB:-room_service_proxy}
+        POSTGRES_USER=${POSTGRES_USER:-room_service_proxy}
+        POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+        EOF
+      - echo "✅ Environment file created"
+
+  build:
+    desc: Build Docker images
+    cmds:
+      - docker-compose build
+      - echo "✅ Build complete"
+
+  up:
+    desc: Start all services
+    cmds:
+      - docker-compose up -d
+      - echo "✅ Services started"
+
+  down:
+    desc: Stop all services
+    cmds:
+      - docker-compose down
+      - echo "✅ Services stopped"
+
+  restart:
+    desc: Restart all services
+    cmds:
+      - docker-compose restart
+      - echo "✅ Services restarted"
+
+  logs:
+    desc: Show logs from all services
+    cmds:
+      - docker-compose logs -f
+
+  logs:proxy:
+    desc: Show logs from proxy service
+    cmds:
+      - docker-compose logs -f roomservice-proxy
+
+  logs:postgres:
+    desc: Show logs from postgres service
+    cmds:
+      - docker-compose logs -f roomservice-postgres
+
+  ps:
+    desc: Show running containers
+    cmds:
+      - docker-compose ps
+
+  status:
+    desc: Check service health status
+    cmds:
+      - |
+        echo "🔍 Checking service health..."
+        echo ""
+
+        # Check proxy service
+        echo "📡 Proxy Service (http://localhost:8080):"
+        curl -f http://localhost:8080/health && echo "✅ Healthy" || echo "❌ Unhealthy"
+        echo ""
+
+        # Check postgres service
+        echo "🐘 PostgreSQL Service:"
+        docker exec {{.POSTGRES_CONTAINER}} pg_isready -U room_service_proxy && echo "✅ Ready" || echo "❌ Not ready"
+        echo ""
+
+        # Show container status
+        echo "📦 Container Status:"
+        docker-compose ps
+
+  clean:
+    desc: Remove all containers, volumes, and images
+    cmds:
+      - docker-compose down -v --rmi all
+      - echo "✅ Clean complete"
+
+  rebuild:
+    desc: Rebuild and restart services
+    cmds:
+      - docker-compose down
+      - docker-compose build --no-cache
+      - docker-compose up -d
+      - echo "✅ Rebuild complete"
+
+  deploy:
+    desc: Full deployment: setup env, build, and start services
+    cmds:
+      - task: env:setup
+      - task: build
+      - task: up
+      - task: status
+      - echo "🚀 Deployment complete!"
+
+  test:
+    desc: Test API endpoints
+    cmds:
+      - |
+        echo "🧪 Testing API endpoints..."
+        echo ""
+
+        # Test health endpoint
+        echo "1️⃣ Health Check:"
+        curl -f http://localhost:8080/health
+        echo ""
+
+        # Test tenant creation (if ADMIN_API_KEY is set)
+        if [ -n "${ADMIN_API_KEY}" ]; then
+          echo "2️⃣ Create Tenant:"
+          curl -X POST http://localhost:8080/api/tenants \
+            -H "Authorization: Bearer ${ADMIN_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{"name":"test-tenant","email":"test@example.com"}'
+          echo ""
+        fi
+
+  shell:proxy:
+    desc: Open shell in proxy container
+    cmds:
+      - docker exec -it {{.PROXY_CONTAINER}} sh
+
+  shell:postgres:
+    desc: Open psql in postgres container
+    cmds:
+      - docker exec -it {{.POSTGRES_CONTAINER}} psql -U room_service_proxy -d room_service_proxy
+
+  update:
+    desc: Pull latest changes and redeploy
+    cmds:
+      - git pull
+      - task: rebuild
+      - echo "✅ Update complete"

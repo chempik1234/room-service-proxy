@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  roomservice-proxy:
+    build: .
+    container_name: roomservice-proxy
+    restart: always
+    ports:
+      - "50051:50051"
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - GRPC_PORT=${GRPC_PORT:-50051}
+      - RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-100}
+      - RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60s}
+      - RATE_LIMIT_BURST=${RATE_LIMIT_BURST:-10}
+      - ADMIN_PORT=${ADMIN_PORT:-8080}
+      - ADMIN_API_KEY=${ADMIN_API_KEY}
+      - ENABLE_AUTH=${ENABLE_AUTH:-true}
+      - ENABLE_RATE_LIMIT=${ENABLE_RATE_LIMIT:-true}
+      - DEPLOYMENT_PROVIDER=${DEPLOYMENT_PROVIDER:-docker}
+      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+      - YANDEX_ZONE=${YANDEX_ZONE}
+      - YANDEX_SERVICE_ACCOUNT_KEY=${YANDEX_SERVICE_ACCOUNT_KEY}
+      - YANDEX_SSH_KEY_PATH=${YANDEX_SSH_KEY_PATH}
+    networks:
+      - roomservice-network
+    depends_on:
+      - roomservice-postgres
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  roomservice-postgres:
+    image: postgres:16-alpine
+    container_name: roomservice-postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-room_service_proxy}
+      - POSTGRES_USER=${POSTGRES_USER:-room_service_proxy}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - roomservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U room_service_proxy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+
+networks:
+  roomservice-network:
+    driver: bridge

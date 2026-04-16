@@ -1,31 +1,16 @@
-name: Build and Deploy Docker Image
+name: Deploy to Yandex Cloud via Taskfile
 
 on:
   push:
     branches: [ master ]
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
-
-    - name: Build Docker image
-      uses: docker/build-push-action@v4
-      with:
-        context: .
-        push: false
-        tags: roomservice-proxy:latest
-        outputs: type=docker,dest=/tmp/roomservice-proxy.tar
-
-    - name: Save image to file
-      run: |
-        ls -lh /tmp/roomservice-proxy.tar
 
     - name: Deploy to Yandex Cloud VM
       uses: appleboy/ssh-action@master
@@ -38,73 +23,65 @@ jobs:
           mkdir -p ~/roomservice
           cd ~/roomservice
 
-          # Stop and remove existing container
-          docker stop roomservice-proxy || true
-          docker rm roomservice-proxy || true
-
-          # Create .env file if it doesn't exist
-          if [ ! -f .env ]; then
-            cat > .env << 'EOF'
-          DATABASE_URL=postgresql://room_service_proxy:big_chungus@localhost:5432/room_service_proxy
-          GRPC_PORT=50051
-          RATE_LIMIT_RPS=100
-          RATE_LIMIT_WINDOW=60s
-          RATE_LIMIT_BURST=10
-          ADMIN_PORT=8080
-          ADMIN_API_KEY=461cc4ffbcc68784d21dfb0cab66fb703afe1093e1d620d7f8cf8be66e618d87
-          ENABLE_AUTH=true
-          ENABLE_RATE_LIMIT=true
-          DEPLOYMENT_PROVIDER=docker
-          EOF
+          # Install Task if not already installed
+          if ! command -v task &> /dev/null; then
+            echo "Installing Task..."
+            sudo sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
           fi
 
-          # Load and run the new image (will be uploaded in next step)
-          echo "Ready to receive new Docker image"
+          # Clone or update repository
+          if [ -d ".git" ]; then
+            echo "Updating existing repository..."
+            git pull
+          else
+            echo "Cloning repository..."
+            rm -rf *
+            git clone https://github.com/${{ github.repository }}.git tmp
+            mv tmp/* tmp/.gitignore .
+            rm -rf tmp
+          fi
 
-    - name: Upload Docker image to VM
-      uses: appleboy/scp-action@master
-      with:
-        host: ${{ secrets.YANDEK_HOST }}
-        username: ${{ secrets.YANDEK_USER }}
-        key: ${{ secrets.YANDEK_SSH_KEY }}
-        source: "/tmp/roomservice-proxy.tar"
-        target: "~/roomservice/"
+          # Setup environment from host variables
+          echo "Setting up environment..."
+          cat > .env << EOF
+          DATABASE_URL=${DATABASE_URL}
+          GRPC_PORT=${GRPC_PORT:-50051}
+          RATE_LIMIT_RPS=${RATE_LIMIT_RPS:-100}
+          RATE_LIMIT_WINDOW=${RATE_LIMIT_WINDOW:-60s}
+          RATE_LIMIT_BURST=${RATE_LIMIT_BURST:-10}
+          ADMIN_PORT=${ADMIN_PORT:-8080}
+          ADMIN_API_KEY=${ADMIN_API_KEY}
+          ENABLE_AUTH=${ENABLE_AUTH:-true}
+          ENABLE_RATE_LIMIT=${ENABLE_RATE_LIMIT:-true}
+          DEPLOYMENT_PROVIDER=${DEPLOYMENT_PROVIDER:-yandex}
+          YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
+          YANDEX_ZONE=${YANDEX_ZONE}
+          POSTGRES_DB=${POSTGRES_DB:-room_service_proxy}
+          POSTGRES_USER=${POSTGRES_USER:-room_service_proxy}
+          POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+          EOF
 
-    - name: Start new container
-      uses: appleboy/ssh-action@master
-      with:
-        host: ${{ secrets.YANDEK_HOST }}
-        username: ${{ secrets.YANDEK_USER }}
-        key: ${{ secrets.YANDEK_SSH_KEY }}
-        script: |
-          cd ~/roomservice
+          # Stop existing services
+          echo "Stopping existing services..."
+          docker-compose down || true
 
-          # Load the new Docker image
-          docker load -i roomservice-proxy.tar
+          # Rebuild and start services using Task
+          echo "Building and deploying services..."
+          task rebuild
 
-          # Run the new container
-          docker run -d \
-            --name roomservice-proxy \
-            --restart always \
-            -p 50051:50051 \
-            -p 8080:8080 \
-            --env-file .env \
-            --link roomservice-postgres:postgres \
-            roomservice-proxy:latest
+          # Wait for services to be healthy
+          echo "Waiting for services to be healthy..."
+          sleep 10
 
-          # Clean up old images
-          docker image prune -f
-
-          # Wait for container to start
-          sleep 5
-
-          # Check container status
-          docker ps | grep roomservice-proxy
-
-          # Health check
+          # Check service health
+          echo "Checking service health..."
           curl -f http://localhost:8080/health || exit 1
 
           echo "✅ Deployment successful!"
+
+    - name: Notify on success
+      if: success()
+      run: echo "✅ Deployment successful!"
 
     - name: Notify on failure
       if: failure()
