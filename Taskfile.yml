@@ -124,7 +124,7 @@ tasks:
       - echo "✅ Rebuild complete"
 
   deploy:
-    desc: Full deployment: setup env, build, and start services
+    desc: "Full deployment: setup env, build, and start services"
     cmds:
       - task: env:setup
       - task: build
