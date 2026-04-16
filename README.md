@@ -321,18 +321,22 @@ Every push to `master` triggers automated deployment:
 
 **Required GitHub Secrets:**
 ```
-YANDEX_HOST = your_vm_ip
-YANDEX_USER = your_username
-YANDEX_SSH_KEY = your_ssh_private_key
+# SSH Connection Secrets
+YANDEX_HOST = <your VM IP>
+YANDEX_USER = <your VM username>
+YANDEX_SSH_KEY = <your SSH private key for VM access>
 
-# Yandex Deployment Environment Variables
-DATABASE_URL = postgresql://room_service_proxy:password@localhost:5432/room_service_proxy
-ADMIN_API_KEY = your_admin_api_key
-YANDEX_FOLDER_ID = your_yandex_folder_id
-YANDEX_ZONE = ru-central1-a
-YANDEX_SERVICE_ACCOUNT_KEY = /path/to/service-account-key.json
-YANDEX_SSH_KEY_PATH = /path/to/ssh/key
-POSTGRES_PASSWORD = your_postgres_password
+# Yandex Key File Secrets (actual file content, not paths)
+YANDEX_SERVICE_ACCOUNT_KEY = <content of yandex-service-account-key.json>
+YANDEX_PROVISIONING_SSH_KEY = <content of yandex_provisioning_key private key>
+YANDEX_PROVISIONING_SSH_KEY_PUB = <content of yandex_provisioning_key.pub>
+
+# Deployment Configuration (optional, has defaults)
+DATABASE_URL = <your database connection string>
+ADMIN_API_KEY = <your admin API key>
+YANDEX_FOLDER_ID = <your Yandex folder ID>
+YANDEX_ZONE = <your Yandex zone>
+POSTGRES_PASSWORD = <your PostgreSQL password>
 ```
 
 ## 🔐 Security
