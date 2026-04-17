@@ -87,7 +87,7 @@ jobs:
 
           # Stop existing services
           echo "Stopping existing services..."
-          docker-compose down || true
+          docker compose down || true
 
           # Rebuild and start services using Task
           echo "Building and deploying services..."
