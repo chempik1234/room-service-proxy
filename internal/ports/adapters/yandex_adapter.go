@@ -237,7 +237,6 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
 		"--network-interface", "subnet-id="+y.subnetID,
 		"--ssh-key", y.sshKeyPath,
-		"--create-user",
 		"--format", "json",
 	)
 
