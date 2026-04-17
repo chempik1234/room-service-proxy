@@ -22,6 +22,8 @@ type YandexServiceDeployer struct {
 	sshUser      string
 	baseImageID   string
 	platform     string // "standard-v2" or "standard-v3"
+	coreFraction int    // Core fraction percentage (5, 20, 100)
+	memory       int    // Memory in GB
 }
 
 // NewYandexServiceDeployer creates a new Yandex Cloud deployer
@@ -43,7 +45,9 @@ func NewYandexServiceDeployer(folderID, zone, subnetID, serviceAccountKey, sshKe
 		sshKeyPath:        sshKeyPath,
 		sshUser:          "yc-user", // Yandex Cloud creates 'yc-user' when using --ssh-key
 		baseImageID:      "fd8qbv9cd4p6tcp1f4dj0",
-		platform:         "standard-v2", // 2 vCPU, 2 GB RAM
+		platform:         "standard-v2", // 2 vCPU
+		coreFraction:     20,              // 20% guaranteed CPU (cost-effective)
+		memory:           4,               // 4 GB RAM
 	}, nil
 }
 
@@ -291,6 +295,8 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		"--folder-id", y.folderID,
 		"--zone", y.zone,
 		"--platform", y.platform,
+		"--core-fraction", fmt.Sprintf("%d", y.coreFraction),
+		"--memory", fmt.Sprintf("%d", y.memory),
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
 		"--serial-port-settings", "ssh-authorization=instance-metadata",
