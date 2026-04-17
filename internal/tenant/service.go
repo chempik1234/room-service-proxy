@@ -198,6 +198,9 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	// Deploy database
 	mongoDeployment, err := s.deployer.DeployDatabase(ctx, tenant.ID)
 	if err != nil {
+		// Cleanup in case partial resources were created (like VMs)
+		log.Printf("ERROR: Failed to deploy database, attempting cleanup for tenant %s", tenant.ID)
+		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("failed to deploy database: %w", err)
 	}
 	log.Println("- deployed database for tenant", tenant.ID)
