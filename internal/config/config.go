@@ -42,6 +42,7 @@ type Config struct {
 	// Yandex Cloud config
 	YandexFolderID          string
 	YandexZone              string
+	YandexSubnetID          string
 	YandexServiceAccountKey string
 	YandexSSHKeyPath         string
 }
@@ -82,6 +83,7 @@ func Load() (*Config, error) {
 		// Yandex Cloud config
 		YandexFolderID:          getEnv("YANDEX_FOLDER_ID", ""),
 		YandexZone:              getEnv("YANDEX_ZONE", "ru-central1-a"),
+		YandexSubnetID:          getEnv("YANDEX_SUBNET_ID", ""),
 		YandexServiceAccountKey: getEnv("YANDEX_SERVICE_ACCOUNT_KEY", ""),
 		YandexSSHKeyPath:         getEnv("YANDEX_SSH_KEY_PATH", ""),
 	}

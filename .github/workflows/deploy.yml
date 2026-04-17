@@ -62,6 +62,7 @@ jobs:
           DEPLOYMENT_PROVIDER=${{ vars.DEPLOYMENT_PROVIDER }}
           YANDEX_FOLDER_ID=${{ secrets.YANDEX_FOLDER_ID }}
           YANDEX_ZONE=${{ secrets.YANDEX_ZONE }}
+          YANDEX_SUBNET_ID=${{ secrets.YANDEX_SUBNET_ID }}
           YANDEX_SERVICE_ACCOUNT_KEY=/app/keys/yandex-service-account-key.json
           YANDEX_SSH_KEY_PATH=/app/keys/yandex_provisioning_key
           POSTGRES_DB=${{ vars.POSTGRES_DB }}

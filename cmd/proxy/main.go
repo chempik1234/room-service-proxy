@@ -120,6 +120,7 @@ func startAdminAPIServer(cfg *config.Config, ctx context.Context) {
 	case "yandex":
 		deploymentConfig["yandex_folder_id"] = cfg.YandexFolderID
 		deploymentConfig["yandex_zone"] = cfg.YandexZone
+		deploymentConfig["yandex_subnet_id"] = cfg.YandexSubnetID
 		deploymentConfig["yandex_service_account_key"] = cfg.YandexServiceAccountKey
 		deploymentConfig["yandex_ssh_key_path"] = cfg.YandexSSHKeyPath
 	}

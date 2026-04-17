@@ -15,6 +15,7 @@ import (
 type YandexServiceDeployer struct {
 	folderID     string
 	zone         string
+	subnetID     string
 	serviceAccountKey string
 	sshKeyPath    string
 	sshUser      string
@@ -23,7 +24,7 @@ type YandexServiceDeployer struct {
 }
 
 // NewYandexServiceDeployer creates a new Yandex Cloud deployer
-func NewYandexServiceDeployer(folderID, zone, serviceAccountKey, sshKeyPath string) (*YandexServiceDeployer, error) {
+func NewYandexServiceDeployer(folderID, zone, subnetID, serviceAccountKey, sshKeyPath string) (*YandexServiceDeployer, error) {
 	if folderID == "" {
 		return nil, fmt.Errorf("YANDEX_FOLDER_ID environment variable is required")
 	}
@@ -31,6 +32,7 @@ func NewYandexServiceDeployer(folderID, zone, serviceAccountKey, sshKeyPath stri
 	return &YandexServiceDeployer{
 		folderID:          folderID,
 		zone:              zone,
+		subnetID:          subnetID,
 		serviceAccountKey: serviceAccountKey,
 		sshKeyPath:        sshKeyPath,
 		sshUser:          "yandex",
@@ -233,6 +235,7 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--zone", y.zone,
 		"--platform", y.platform,
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
+		"--network-interface", "subnet-id="+y.subnetID,
 		"--ssh-key", y.sshKeyPath,
 		"--format", "json",
 	)

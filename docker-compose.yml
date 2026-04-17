@@ -23,6 +23,7 @@ services:
       - DEPLOYMENT_PROVIDER=${DEPLOYMENT_PROVIDER:-yandex}
       - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID}
       - YANDEX_ZONE=${YANDEX_ZONE}
+      - YANDEX_SUBNET_ID=${YANDEX_SUBNET_ID}
       - YANDEX_SERVICE_ACCOUNT_KEY=/app/keys/yandex-service-account-key.json
       - YANDEX_SSH_KEY_PATH=/app/keys/yandex_provisioning_key
     volumes:

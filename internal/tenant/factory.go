@@ -79,7 +79,7 @@ func NewTenantServiceFromAdapters(storage ports.TenantStorage, deployer ports.Se
 }
 
 // NewTenantServiceWithPostgresAndYandex creates a tenant service with PostgreSQL storage and Yandex Cloud deployment
-func NewTenantServiceWithPostgresAndYandex(dbURL string, yandexFolderID string, yandexZone string, yandexServiceAccountKey string, yandexSSHKeyPath string) (*Service, error) {
+func NewTenantServiceWithPostgresAndYandex(dbURL string, yandexFolderID string, yandexZone string, yandexSubnetID string, yandexServiceAccountKey string, yandexSSHKeyPath string) (*Service, error) {
 	// Create storage adapter
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -96,7 +96,7 @@ func NewTenantServiceWithPostgresAndYandex(dbURL string, yandexFolderID string, 
 	}
 
 	// Create Yandex deployer adapter
-	deployer, err := adapters.NewYandexServiceDeployer(yandexFolderID, yandexZone, yandexServiceAccountKey, yandexSSHKeyPath)
+	deployer, err := adapters.NewYandexServiceDeployer(yandexFolderID, yandexZone, yandexSubnetID, yandexServiceAccountKey, yandexSSHKeyPath)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create Yandex deployer: %w", err)

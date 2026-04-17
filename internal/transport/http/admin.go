@@ -45,9 +45,10 @@ func NewAdminAPI(dbURL string, adminAPIKey string, deploymentProvider string, de
 	case "yandex":
 		yandexFolderID := deploymentConfig["yandex_folder_id"]
 		yandexZone := deploymentConfig["yandex_zone"]
+		yandexSubnetID := deploymentConfig["yandex_subnet_id"]
 		yandexServiceAccountKey := deploymentConfig["yandex_service_account_key"]
 		yandexSSHKeyPath := deploymentConfig["yandex_ssh_key_path"]
-		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndYandex(dbURL, yandexFolderID, yandexZone, yandexServiceAccountKey, yandexSSHKeyPath)
+		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndYandex(dbURL, yandexFolderID, yandexZone, yandexSubnetID, yandexServiceAccountKey, yandexSSHKeyPath)
 	case "docker":
 		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndDocker(dbURL)
 	default:
