@@ -104,6 +104,7 @@ jobs:
           # Rebuild and start services using Task (with cache)
           echo "Building and deploying services..."
           task build
+          task up
 
           # Wait for services to be healthy
           echo "Waiting for services to be healthy..."
