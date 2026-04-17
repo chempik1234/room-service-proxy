@@ -246,7 +246,7 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 	time.Sleep(30 * time.Second) // Give Yandex time to provision
 
 	// Get instance IP
-	env := []string{
+	cmd.Env = []string{
 		fmt.Sprintf("YC_SERVICE_ACCOUNT_KEY_PATH=%s", y.serviceAccountKey),
 	}
 	cmd = exec.CommandContext(ctx, "yc", "compute", "instance", "get",
@@ -254,7 +254,6 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--folder-id", y.folderID,
 		"--format", "json",
 	)
-	cmd.Env = env
 
 	output, err = cmd.CombinedOutput()
 	if err != nil {
