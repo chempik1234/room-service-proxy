@@ -232,7 +232,7 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--zone", y.zone,
 		"--platform", y.platform,
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
-		"--ssh-user", y.sshUser,
+		"--ssh-key", y.sshKeyPath,
 		"--format", "json",
 	)
 	cmd.Env = env
