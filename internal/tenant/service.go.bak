@@ -214,9 +214,7 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	if err != nil {
 		// Idempotent cleanup: delete database
 		log.Printf("ERROR: Failed to deploy cache for tenant %s: %v", tenant.ID, err)
-		if delErr := s.deployer.DeleteServices(ctx, tenant.ID); delErr != nil {
-			log.Printf("Failed to cleanup after cache deployment failure: %v", delErr)
-		}
+		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("failed to deploy cache: %w", err)
 	}
 	log.Println("- deployed cache for tenant", tenant.ID)
@@ -232,9 +230,7 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	if err != nil {
 		// Idempotent cleanup: delete cache and database
 		log.Printf("ERROR: Failed to deploy application for tenant %s: %v", tenant.ID, err)
-		if delErr := s.deployer.DeleteServices(ctx, tenant.ID); delErr != nil {
-			log.Printf("Failed to cleanup after application deployment failure: %v", delErr)
-		}
+		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("failed to deploy application: %w", err)
 	}
 	log.Println("- deployed application for tenant", tenant.ID)
@@ -243,9 +239,7 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	if err := s.waitForTenantServices(ctx, tenant.ID); err != nil {
 		// Idempotent cleanup: delete all services
 		log.Printf("ERROR: Services not ready, attempting cleanup for tenant %s", tenant.ID)
-		if delErr := s.deployer.DeleteServices(ctx, tenant.ID); delErr != nil {
-			log.Printf("Failed to cleanup after services not ready: %v", delErr)
-		}
+		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("services not ready: %w", err)
 	}
 

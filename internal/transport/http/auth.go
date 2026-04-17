@@ -75,7 +75,9 @@ func checkPassword(password, hash string) bool {
 // generateToken generates a simple authentication token
 func generateToken() string {
 	b := make([]byte, 32)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
 	return base64.URLEncoding.EncodeToString(b)
 }
 

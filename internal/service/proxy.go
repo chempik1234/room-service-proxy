@@ -20,6 +20,10 @@ import (
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
 )
 
+const (
+	defaultRequestTimeout = 30 * time.Second
+)
+
 // Service handles gRPC proxying
 type Service struct {
 	db      *pgxpool.Pool
@@ -178,8 +182,10 @@ func (s *Service) forwardUnary(ctx context.Context, req interface{}, info *grpc.
 	// Add timeout if not set
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+		var newCtx context.Context
+		newCtx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
 		defer cancel()
+		ctx = newCtx
 	}
 
 	// Process request directly (tenant context already injected)
@@ -193,11 +199,6 @@ func (s *Service) forwardStream(ctx context.Context, srv interface{}, ss grpc.Se
 	// No connection forwarding needed - tenant isolation happens in the handler
 
 	// Add timeout if not set
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-	}
 
 	// Process stream directly (tenant context already injected)
 	return handler(srv, ss)
@@ -274,6 +275,7 @@ func processSingleLogEntry(entry logEntry) {
 }
 
 // getClientIP extracts client IP from context
+//nolint:unused // kept for future use
 func (s *Service) getClientIP(ctx context.Context) string {
 	p, ok := peer.FromContext(ctx)
 	if !ok {

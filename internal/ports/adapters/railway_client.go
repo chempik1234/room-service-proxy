@@ -67,13 +67,13 @@ func (r *RailwayService) CreateProject(projectName string) (string, error) {
 // CreateMongoDB creates a MongoDB service
 func (r *RailwayService) CreateMongoDB(projectID, tenantID, password string) (string, error) {
 	payload := map[string]interface{}{
-		"query": fmt.Sprintf(`
+		"query": `
 			mutation($projectId: String!, $name: String!) {
 				serviceCreate(input: { projectId: $projectId, name: $name, source: { image: "mongo:6" } } ) {
 					id
 				}
 			}
-		`),
+		`,
 		"variables": map[string]interface{}{
 			"projectId": projectID,
 			"name":      fmt.Sprintf("%s-mongo", tenantID),
@@ -109,13 +109,13 @@ func (r *RailwayService) CreateMongoDB(projectID, tenantID, password string) (st
 // CreateRedis creates a Redis service
 func (r *RailwayService) CreateRedis(projectID, tenantID, password string) (string, error) {
 	payload := map[string]interface{}{
-		"query": fmt.Sprintf(`
+		"query": `
 			mutation($projectId: String!, $name: String!) {
 				serviceCreate(input: { projectId: $projectId, name: $name, source: { image: "redis:7" } }) {
 					id
 				}
 			}
-		`),
+		`,
 		"variables": map[string]interface{}{
 			"projectId": projectID,
 			"name":      fmt.Sprintf("%s-redis", tenantID),
@@ -398,7 +398,7 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrAPIRequest, err)
 	}
-	defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -406,9 +406,9 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 
 		// Check for Railway-specific limit errors
 		if strings.Contains(errorMsg, "exceeded limit") ||
-		   strings.Contains(errorMsg, "service limit") ||
-		   strings.Contains(errorMsg, "quota exceeded") {
-			return nil, fmt.Errorf("Railway service limit exceeded: %s", errorMsg)
+			strings.Contains(errorMsg, "service limit") ||
+			strings.Contains(errorMsg, "quota exceeded") {
+			return nil, fmt.Errorf("railway service limit exceeded: %s", errorMsg)
 		}
 
 		return nil, fmt.Errorf("%w: status %d: %s", ErrAPIRequest, resp.StatusCode, errorMsg)

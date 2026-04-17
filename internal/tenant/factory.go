@@ -13,7 +13,7 @@ import (
 // NewTenantServiceWithPostgresAndDocker creates a tenant service with PostgreSQL storage and Docker deployment
 // NOTE: Docker adapter is currently disabled due to API changes. Use Railway instead.
 func NewTenantServiceWithPostgresAndDocker(dbURL string) (*Service, error) {
-	return nil, fmt.Errorf("Docker adapter is currently disabled. Please use Railway deployment instead.")
+	return nil, fmt.Errorf("docker adapter is currently disabled; please use Railway deployment instead")
 }
 
 // NewTenantServiceWithPostgresAndRailway creates a tenant service with PostgreSQL storage and Railway deployment
@@ -39,7 +39,7 @@ func NewTenantServiceWithPostgresAndRailway(dbURL, railwayToken, railwayProjectI
 		deployer = adapters.NewRailwayServiceDeployer(railwayToken, railwayProjectID, railwayEnvID)
 	} else {
 		// Docker adapter is currently disabled, require Railway credentials
-		return nil, fmt.Errorf("Railway credentials are required. Docker adapter is currently disabled.")
+		return nil, fmt.Errorf("railway credentials are required; docker adapter is currently disabled")
 	}
 
 	return NewService(storage, deployer)
@@ -48,7 +48,7 @@ func NewTenantServiceWithPostgresAndRailway(dbURL, railwayToken, railwayProjectI
 // NewTenantServiceWithPoolAndDocker creates a tenant service with existing PostgreSQL pool and Docker deployment
 // NOTE: Docker adapter is currently disabled. Use Railway instead.
 func NewTenantServiceWithPoolAndDocker(db *pgxpool.Pool) (*Service, error) {
-	return nil, fmt.Errorf("Docker adapter is currently disabled. Please use Railway deployment instead.")
+	return nil, fmt.Errorf("docker adapter is currently disabled; please use Railway deployment instead")
 }
 
 // NewTenantServiceWithPoolAndRailway creates a tenant service with existing PostgreSQL pool and Railway deployment
@@ -65,7 +65,7 @@ func NewTenantServiceWithPoolAndRailway(db *pgxpool.Pool, railwayToken, railwayP
 
 	// Create deployer adapter
 	if railwayToken == "" || railwayProjectID == "" || railwayEnvID == "" {
-		return nil, fmt.Errorf("Railway credentials are required. Docker adapter is currently disabled.")
+		return nil, fmt.Errorf("railway credentials are required; docker adapter is currently disabled")
 	}
 
 	deployer := adapters.NewRailwayServiceDeployer(railwayToken, railwayProjectID, railwayEnvID)
