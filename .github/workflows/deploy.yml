@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: roomservice-yandex
 
     steps:
     - name: Checkout code
@@ -46,26 +47,26 @@ jobs:
           echo "Removing any existing .env file..."
           rm -f .env
 
-          # Setup environment from GitHub variables and secrets
-          echo "Setting up environment from GitHub variables and secrets..."
+          # Setup environment from GitHub environment
+          echo "Setting up environment from roomservice-yandex environment..."
           cat > .env << EOF
-          DATABASE_URL=${{ secrets.DATABASE_URL || 'postgresql://room_service_proxy:big_chungus@roomservice-postgres:5432/room_service_proxy' }}
-          GRPC_PORT=${{ vars.GRPC_PORT || '50051' }}
-          RATE_LIMIT_RPS=${{ vars.RATE_LIMIT_RPS || '100' }}
-          RATE_LIMIT_WINDOW=${{ vars.RATE_LIMIT_WINDOW || '60s' }}
-          RATE_LIMIT_BURST=${{ vars.RATE_LIMIT_BURST || '10' }}
-          ADMIN_PORT=${{ vars.ADMIN_PORT || '8080' }}
-          ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY || '461cc4ffbcc68784d21dfb0cab66fb703afe1093e1d620d7f8cf8be66e618d87' }}
-          ENABLE_AUTH=${{ vars.ENABLE_AUTH || 'true' }}
-          ENABLE_RATE_LIMIT=${{ vars.ENABLE_RATE_LIMIT || 'true' }}
-          DEPLOYMENT_PROVIDER=${{ vars.DEPLOYMENT_PROVIDER || 'yandex' }}
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          GRPC_PORT=${{ vars.GRPC_PORT }}
+          RATE_LIMIT_RPS=${{ vars.RATE_LIMIT_RPS }}
+          RATE_LIMIT_WINDOW=${{ vars.RATE_LIMIT_WINDOW }}
+          RATE_LIMIT_BURST=${{ vars.RATE_LIMIT_BURST }}
+          ADMIN_PORT=${{ vars.ADMIN_PORT }}
+          ADMIN_API_KEY=${{ secrets.ADMIN_API_KEY }}
+          ENABLE_AUTH=${{ vars.ENABLE_AUTH }}
+          ENABLE_RATE_LIMIT=${{ vars.ENABLE_RATE_LIMIT }}
+          DEPLOYMENT_PROVIDER=${{ vars.DEPLOYMENT_PROVIDER }}
           YANDEX_FOLDER_ID=${{ secrets.YANDEX_FOLDER_ID }}
           YANDEX_ZONE=${{ secrets.YANDEX_ZONE }}
           YANDEX_SERVICE_ACCOUNT_KEY=/app/keys/yandex-service-account-key.json
           YANDEX_SSH_KEY_PATH=/app/keys/yandex_provisioning_key
-          POSTGRES_DB=${{ vars.POSTGRES_DB || 'room_service_proxy' }}
-          POSTGRES_USER=${{ vars.POSTGRES_USER || 'room_service_proxy' }}
-          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD || 'big_chungus' }}
+          POSTGRES_DB=${{ vars.POSTGRES_DB }}
+          POSTGRES_USER=${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
           EOF
 
           # Create keys directory and upload key files
