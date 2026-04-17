@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -334,16 +335,28 @@ func (api *AdminAPI) deleteTenant(c *gin.Context) {
 	}
 
 	// Add timeout to context
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	storage := api.tenantSvc.GetStorage()
-	if err := storage.DeleteTenant(ctx, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete tenant: %v", err)})
+	// First, delete tenant infrastructure (VMs) to stop costs
+	deployer := api.tenantSvc.GetDeployer()
+	log.Printf("🧹 Cleaning up infrastructure for tenant %s", id)
+	if err := deployer.DeleteServices(ctx, id); err != nil {
+		log.Printf("⚠️  Failed to cleanup infrastructure for tenant %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to cleanup tenant infrastructure: %v", err)})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Tenant deleted successfully"})
+	// Then, delete database row
+	storage := api.tenantSvc.GetStorage()
+	if err := storage.DeleteTenant(ctx, id); err != nil {
+		log.Printf("⚠️  Failed to delete database row for tenant %s: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete tenant record: %v", err)})
+		return
+	}
+
+	log.Printf("✅ Tenant %s and all infrastructure deleted successfully", id)
+	c.JSON(http.StatusOK, gin.H{"message": "Tenant and infrastructure deleted successfully"})
 }
 
 // regenerateAPIKey regenerates the API key for a tenant
