@@ -220,6 +220,11 @@ func (y *YandexServiceDeployer) GetStatus(ctx context.Context, tenantID string) 
 
 // createComputeInstance creates a new Yandex compute instance
 func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, instanceName, tenantID string) (string, error) {
+	// Set up environment with service account key
+	env := []string{
+		fmt.Sprintf("YC_SERVICE_ACCOUNT_KEY_PATH=%s", y.serviceAccountKey),
+	}
+
 	// Use yc CLI to create instance
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create",
 		"--name", instanceName,
@@ -230,6 +235,7 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--ssh", fmt.Sprintf("user=%s", y.sshUser),
 		"--format", "json",
 	)
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -240,11 +246,15 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 	time.Sleep(30 * time.Second) // Give Yandex time to provision
 
 	// Get instance IP
+	env := []string{
+		fmt.Sprintf("YC_SERVICE_ACCOUNT_KEY_PATH=%s", y.serviceAccountKey),
+	}
 	cmd = exec.CommandContext(ctx, "yc", "compute", "instance", "get",
 		instanceName,
 		"--folder-id", y.folderID,
 		"--format", "json",
 	)
+	cmd.Env = env
 
 	output, err = cmd.CombinedOutput()
 	if err != nil {
@@ -262,10 +272,14 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 
 // deleteComputeInstance deletes a Yandex compute instance
 func (y *YandexServiceDeployer) deleteComputeInstance(ctx context.Context, instanceName string) error {
+	env := []string{
+		fmt.Sprintf("YC_SERVICE_ACCOUNT_KEY_PATH=%s", y.serviceAccountKey),
+	}
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "delete",
 		instanceName,
 		"--folder-id", y.folderID,
 	)
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -312,11 +326,15 @@ func (y *YandexServiceDeployer) deployRoomServiceBinary(ctx context.Context, ins
 
 // checkInstanceHealth checks if an instance is running and healthy
 func (y *YandexServiceDeployer) checkInstanceHealth(ctx context.Context, instanceName string) (bool, error) {
+	env := []string{
+		fmt.Sprintf("YC_SERVICE_ACCOUNT_KEY_PATH=%s", y.serviceAccountKey),
+	}
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "get",
 		instanceName,
 		"--folder-id", y.folderID,
 		"--format", "json",
 	)
+	cmd.Env = env
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
