@@ -1,6 +1,8 @@
 version: '3.8'
 
 services:
+# Docker Compose will start these services automatically on boot
+# Ensure Docker daemon is started: systemctl enable docker --now
   roomservice-proxy:
     build: .
     container_name: roomservice-proxy
