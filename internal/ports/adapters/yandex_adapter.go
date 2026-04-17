@@ -293,7 +293,8 @@ func (y *YandexServiceDeployer) deleteComputeInstance(ctx context.Context, insta
 // deployMongoDBContainer deploys MongoDB via SSH
 func (y *YandexServiceDeployer) deployMongoDBContainer(ctx context.Context, instanceIP, password string) error {
 	commands := []string{
-		"sudo docker update && sudo docker install -y",
+		"sudo docker update || true",
+		"sudo docker --version || (curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker yandex)",
 		fmt.Sprintf("sudo docker run -d --name mongodb -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=%s mongo:6", password),
 	}
 
@@ -367,19 +368,41 @@ func (y *YandexServiceDeployer) executeSSHCommands(ctx context.Context, instance
 
 // parseInstanceIP extracts IP address from yc CLI output
 func (y *YandexServiceDeployer) parseInstanceIP(output string) string {
-	// Simple parsing - look for IP address pattern
-	// In production, use proper JSON parsing
-	if strings.Contains(output, "one_to_one_nat") {
-		// Extract IP from JSON response
-		start := strings.Index(output, "address\": \"")
+	// Parse IP address from JSON response
+	// Look for primary_v4_address (internal IP) or one_to_one_nat (public IP)
+
+	// First try to find primary_v4_address (internal IP)
+	if strings.Contains(output, "primary_v4_address") {
+		// Find the first IP address after primary_v4_address
+		start := strings.Index(output, "primary_v4_address")
 		if start != -1 {
-			start += len("address\": \"")
-			end := strings.Index(output[start:], "\"")
-			if end != -1 {
-				return output[start : start+end]
+			// Look for the next "address" field after primary_v4_address
+			addressStart := strings.Index(output[start:], "\"address\": \"")
+			if addressStart != -1 {
+				addressStart += start + len("\"address\": \"")
+				addressEnd := strings.Index(output[addressStart:], "\"")
+				if addressEnd != -1 {
+					return output[addressStart : addressStart+addressEnd]
+				}
 			}
 		}
 	}
+
+	// Fallback: look for one_to_one_nat (public IP)
+	if strings.Contains(output, "one_to_one_nat") {
+		start := strings.Index(output, "one_to_one_nat")
+		if start != -1 {
+			addressStart := strings.Index(output[start:], "\"address\": \"")
+			if addressStart != -1 {
+				addressStart += start + len("\"address\": \"")
+				addressEnd := strings.Index(output[addressStart:], "\"")
+				if addressEnd != -1 {
+					return output[addressStart : addressStart+addressEnd]
+				}
+			}
+		}
+	}
+
 	return ""
 }
 
