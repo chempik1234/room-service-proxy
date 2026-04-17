@@ -35,7 +35,7 @@ func NewYandexServiceDeployer(folderID, zone, subnetID, serviceAccountKey, sshKe
 		subnetID:          subnetID,
 		serviceAccountKey: serviceAccountKey,
 		sshKeyPath:        sshKeyPath,
-		sshUser:          "yandex",
+		sshUser:          "yc-user", // Yandex Cloud creates 'yc-user' when using --ssh-key
 		baseImageID:      "fd8qbv9cd4p6tcp1f4dj0",
 		platform:         "standard-v2", // 2 vCPU, 2 GB RAM
 	}, nil
@@ -237,6 +237,7 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
 		"--network-interface", "subnet-id="+y.subnetID,
 		"--ssh-key", y.sshKeyPath,
+		"--create-user",
 		"--format", "json",
 	)
 
