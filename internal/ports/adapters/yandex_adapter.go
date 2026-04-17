@@ -352,7 +352,11 @@ func (y *YandexServiceDeployer) checkInstanceHealth(ctx context.Context, instanc
 // executeSSHCommands executes commands on remote instance via SSH
 func (y *YandexServiceDeployer) executeSSHCommands(ctx context.Context, instanceIP string, commands []string) error {
 	for _, cmd := range commands {
-		sshCmd := exec.CommandContext(ctx, "ssh", "-i", y.sshKeyPath,
+		sshCmd := exec.CommandContext(ctx, "ssh",
+			"-i", y.sshKeyPath,
+			"-o", "StrictHostKeyChecking=no",
+			"-o", "UserKnownHostsFile=/dev/null",
+			"-o", "ConnectTimeout=30",
 			fmt.Sprintf("%s@%s", y.sshUser, instanceIP),
 			cmd,
 		)
