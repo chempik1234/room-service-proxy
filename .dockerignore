@@ -1,0 +1,11 @@
+# Source code - keep these
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!pkg/
+!schema.sql
+!scripts/
+
+# Exclude everything else
+*
