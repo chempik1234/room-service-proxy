@@ -73,19 +73,12 @@ jobs:
           echo "Setting up key files..."
           mkdir -p keys
 
-          # Upload service account key using heredoc to preserve quotes and formatting
-          cat > keys/yandex-service-account-key.json << 'ENDOFFILE'
-${{ secrets.YANDEX_SERVICE_ACCOUNT_KEY }}
-ENDOFFILE
+          # Upload service account key using base64 to preserve formatting
+          echo '${{ secrets.YANDEX_SERVICE_ACCOUNT_KEY }}' | base64 -d > keys/yandex-service-account-key.json || echo '${{ secrets.YANDEX_SERVICE_ACCOUNT_KEY }}' > keys/yandex-service-account-key.json
 
-          # Upload SSH keys using heredoc
-          cat > keys/yandex_provisioning_key << 'ENDOFFILE'
-${{ secrets.YANDEX_PROVISIONING_SSH_KEY }}
-ENDOFFILE
-
-          cat > keys/yandex_provisioning_key.pub << 'ENDOFFILE'
-${{ secrets.YANDEX_PROVISIONING_SSH_KEY_PUB }}
-ENDOFFILE
+          # Upload SSH keys
+          echo '${{ secrets.YANDEX_PROVISIONING_SSH_KEY }}' > keys/yandex_provisioning_key
+          echo '${{ secrets.YANDEX_PROVISIONING_SSH_KEY_PUB }}' > keys/yandex_provisioning_key.pub
 
           # Set proper permissions
           chmod 600 keys/yandex-service-account-key.json
