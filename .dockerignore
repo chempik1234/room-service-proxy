@@ -1,11 +1,48 @@
-# Source code - keep these
-!go.mod
-!go.sum
-!cmd/
-!internal/
-!pkg/
-!schema.sql
-!scripts/
+# Git and development
+.git
+.github
+.vscode
+.idea
 
-# Exclude everything else
-*
+# Documentation and examples
+*.md
+docs/
+.env.example
+.env.yandex.example
+
+# SSH keys and sensitive files (security!)
+*_key
+*_key.pub
+ssh_keys.txt
+keys/
+*.json
+
+# Compiled binaries and build artifacts
+proxy
+proxy.exe
+*.exe
+bin/
+*.out
+
+# CI/CD and deployment (not needed in container)
+Taskfile.yml
+railway.toml
+deploy.sh
+roomservice-docker-compose.service
+docker-compose.yml
+
+# Docker files (don't nest)
+Dockerfile
+.dockerignore
+
+# Test and temporary files
+*_test.go
+integration_tests/
+tmp/
+temp/
+*.tmp
+nul
+*.log
+.DS_Store
+Thumbs.db
+
