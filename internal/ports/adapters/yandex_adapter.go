@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -27,6 +28,11 @@ type YandexServiceDeployer struct {
 func NewYandexServiceDeployer(folderID, zone, subnetID, serviceAccountKey, sshKeyPath string) (*YandexServiceDeployer, error) {
 	if folderID == "" {
 		return nil, fmt.Errorf("YANDEX_FOLDER_ID environment variable is required")
+	}
+
+	// Ensure SSH key has proper permissions (chmod 600)
+	if err := os.Chmod(sshKeyPath, 0600); err != nil {
+		log.Printf("Warning: Could not set SSH key permissions: %v", err)
 	}
 
 	return &YandexServiceDeployer{
@@ -236,7 +242,7 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--platform", y.platform,
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
 		"--network-interface", "subnet-id="+y.subnetID,
-		"--ssh-key", y.sshKeyPath,
+		"--ssh-key", y.sshKeyPath + ".pub",
 		"--serial-port-settings", "ssh-authorization=instance-metadata",
 		"--format", "json",
 	)
