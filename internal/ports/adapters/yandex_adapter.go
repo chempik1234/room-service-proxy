@@ -52,9 +52,21 @@ func (y *YandexServiceDeployer) DeployDatabase(ctx context.Context, tenantID str
 	instanceName := fmt.Sprintf("%s-mongo", tenantID)
 	password := generateRandomPassword(32)
 
-	// Create cloud-config for MongoDB
+	// Read SSH public key
+	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
+	if err != nil {
+		return dto.DatabaseDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
+	}
+
+	// Create cloud-config for MongoDB with SSH key
 	cloudConfig := fmt.Sprintf(`#cloud-config
 ssh_pwauth: no
+users:
+  - name: yc-user
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - %s
 runcmd:
   - apt update
   - apt install -y docker.io
@@ -64,7 +76,7 @@ runcmd:
   - docker run -d --name mongodb -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=%s mongo:6
 bootcmd:
   - 'if ! docker ps -q -f name=mongodb | grep -q .; then docker start mongodb 2>/dev/null || true; fi'
-`, password)
+`, strings.TrimSpace(string(sshPublicKey)), password)
 
 	// Create compute instance with cloud-config
 	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig)
@@ -90,9 +102,21 @@ func (y *YandexServiceDeployer) DeployCache(ctx context.Context, tenantID string
 	instanceName := fmt.Sprintf("%s-redis", tenantID)
 	password := generateRandomPassword(32)
 
-	// Create cloud-config for Redis
+	// Read SSH public key
+	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
+	if err != nil {
+		return dto.CacheDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
+	}
+
+	// Create cloud-config for Redis with SSH key
 	cloudConfig := fmt.Sprintf(`#cloud-config
 ssh_pwauth: no
+users:
+  - name: yc-user
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - %s
 runcmd:
   - apt update
   - apt install -y docker.io
@@ -102,7 +126,7 @@ runcmd:
   - docker run -d --name redis -p 6379:6379 redis:7 redis-server --requirepass %s
 bootcmd:
   - 'if ! docker ps -q -f name=redis | grep -q .; then docker start redis 2>/dev/null || true; fi'
-`, password)
+`, strings.TrimSpace(string(sshPublicKey)), password)
 
 	// Create compute instance with cloud-config
 	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig)
@@ -126,18 +150,30 @@ bootcmd:
 func (y *YandexServiceDeployer) DeployApplication(ctx context.Context, tenantID string, config dto.ApplicationConfig) (dto.ApplicationDeployment, error) {
 	instanceName := tenantID
 
-	// Create cloud-config for RoomService
+	// Read SSH public key
+	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
+	if err != nil {
+		return dto.ApplicationDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
+	}
+
+	// Create cloud-config for RoomService with SSH key
 	// For now, we'll create a basic instance with Docker installed
 	// TODO: Add proper RoomService deployment logic
-	cloudConfig := `#cloud-config
+	cloudConfig := fmt.Sprintf(`#cloud-config
 ssh_pwauth: no
+users:
+  - name: yc-user
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - %s
 runcmd:
   - apt update
   - apt install -y docker.io
   - systemctl enable docker
   - usermod -aG docker yc-user
   - systemctl restart docker
-`
+`, strings.TrimSpace(string(sshPublicKey)))
 
 	// Create compute instance with cloud-config
 	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig)
@@ -257,7 +293,6 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		"--platform", y.platform,
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
-		"--ssh-key", y.sshKeyPath + ".pub",
 		"--serial-port-settings", "ssh-authorization=instance-metadata",
 		"--metadata", "user-data="+cloudConfig,
 		"--format", "json",
