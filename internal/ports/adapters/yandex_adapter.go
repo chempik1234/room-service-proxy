@@ -220,7 +220,13 @@ func (y *YandexServiceDeployer) GetStatus(ctx context.Context, tenantID string) 
 
 // createComputeInstance creates a new Yandex compute instance
 func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, instanceName, tenantID string) (string, error) {
-	// Use yc CLI to create instance with service account key flag
+	// Initialize yc config with service account key
+	initCmd := exec.CommandContext(ctx, "yc", "config", "set", "service-account-key", y.serviceAccountKey)
+	if output, err := initCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("failed to initialize yc config: %w, output: %s", err, string(output))
+	}
+
+	// Use yc CLI to create instance
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create",
 		"--name", instanceName,
 		"--folder-id", y.folderID,
@@ -228,7 +234,6 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 		"--platform", y.platform,
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
 		"--ssh-key", y.sshKeyPath,
-		"--service-account-key", y.serviceAccountKey,
 		"--format", "json",
 	)
 
@@ -244,7 +249,6 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 	cmd = exec.CommandContext(ctx, "yc", "compute", "instance", "get",
 		instanceName,
 		"--folder-id", y.folderID,
-		"--service-account-key", y.serviceAccountKey,
 		"--format", "json",
 	)
 
@@ -264,10 +268,15 @@ func (y *YandexServiceDeployer) createComputeInstance(ctx context.Context, insta
 
 // deleteComputeInstance deletes a Yandex compute instance
 func (y *YandexServiceDeployer) deleteComputeInstance(ctx context.Context, instanceName string) error {
+	// Initialize yc config with service account key
+	initCmd := exec.CommandContext(ctx, "yc", "config", "set", "service-account-key", y.serviceAccountKey)
+	if output, err := initCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to initialize yc config: %w, output: %s", err, string(output))
+	}
+
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "delete",
 		instanceName,
 		"--folder-id", y.folderID,
-		"--service-account-key", y.serviceAccountKey,
 	)
 
 	output, err := cmd.CombinedOutput()
@@ -315,10 +324,15 @@ func (y *YandexServiceDeployer) deployRoomServiceBinary(ctx context.Context, ins
 
 // checkInstanceHealth checks if an instance is running and healthy
 func (y *YandexServiceDeployer) checkInstanceHealth(ctx context.Context, instanceName string) (bool, error) {
+	// Initialize yc config with service account key
+	initCmd := exec.CommandContext(ctx, "yc", "config", "set", "service-account-key", y.serviceAccountKey)
+	if output, err := initCmd.CombinedOutput(); err != nil {
+		return false, fmt.Errorf("failed to initialize yc config: %w, output: %s", err, string(output))
+	}
+
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "get",
 		instanceName,
 		"--folder-id", y.folderID,
-		"--service-account-key", y.serviceAccountKey,
 		"--format", "json",
 	)
 
