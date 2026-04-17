@@ -20,8 +20,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o proxy ./cmd/proxy
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS
-RUN apk --no-cache add ca-certificates curl
+# Install ca-certificates for HTTPS and other dependencies
+RUN apk --no-cache add ca-certificates curl bash
+
+# Install Yandex Cloud CLI (yc)
+RUN curl https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash \
+    && mv /root/yandex-cloud/bin/yc /usr/local/bin/ \
+    && rm -rf /root/yandex-cloud \
+    && yc --version
 
 WORKDIR /root/
 
