@@ -199,7 +199,7 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	mongoDeployment, err := s.deployer.DeployDatabase(ctx, tenant.ID)
 	if err != nil {
 		// Cleanup in case partial resources were created (like VMs)
-		log.Printf("ERROR: Failed to deploy database, attempting cleanup for tenant %s", tenant.ID)
+		log.Printf("ERROR: Failed to deploy database for tenant %s: %v", tenant.ID, err)
 		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("failed to deploy database: %w", err)
 	}
@@ -209,7 +209,7 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	redisDeployment, err := s.deployer.DeployCache(ctx, tenant.ID)
 	if err != nil {
 		// Idempotent cleanup: delete database
-		log.Printf("ERROR: Failed to deploy cache, attempting cleanup for tenant %s", tenant.ID)
+		log.Printf("ERROR: Failed to deploy cache for tenant %s: %v", tenant.ID, err)
 		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("failed to deploy cache: %w", err)
 	}
@@ -225,7 +225,7 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	appDeployment, err := s.deployer.DeployApplication(ctx, tenant.ID, appConfig)
 	if err != nil {
 		// Idempotent cleanup: delete cache and database
-		log.Printf("ERROR: Failed to deploy application, attempting cleanup for tenant %s", tenant.ID)
+		log.Printf("ERROR: Failed to deploy application for tenant %s: %v", tenant.ID, err)
 		s.deployer.DeleteServices(ctx, tenant.ID)
 		return nil, fmt.Errorf("failed to deploy application: %w", err)
 	}
