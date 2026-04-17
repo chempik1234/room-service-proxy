@@ -73,17 +73,30 @@ jobs:
           echo "Setting up key files..."
           mkdir -p keys
 
-          # Upload service account key (from GitHub Secret)
-          echo "${{ secrets.YANDEX_SERVICE_ACCOUNT_KEY }}" > keys/yandex-service-account-key.json
+          # Upload service account key using heredoc to preserve quotes and formatting
+          cat > keys/yandex-service-account-key.json << 'ENDOFFILE'
+${{ secrets.YANDEX_SERVICE_ACCOUNT_KEY }}
+ENDOFFILE
 
-          # Upload SSH keys (from GitHub Secret)
-          echo "${{ secrets.YANDEX_PROVISIONING_SSH_KEY }}" > keys/yandex_provisioning_key
-          echo "${{ secrets.YANDEX_PROVISIONING_SSH_KEY_PUB }}" > keys/yandex_provisioning_key.pub
+          # Upload SSH keys using heredoc
+          cat > keys/yandex_provisioning_key << 'ENDOFFILE'
+${{ secrets.YANDEX_PROVISIONING_SSH_KEY }}
+ENDOFFILE
+
+          cat > keys/yandex_provisioning_key.pub << 'ENDOFFILE'
+${{ secrets.YANDEX_PROVISIONING_SSH_KEY_PUB }}
+ENDOFFILE
 
           # Set proper permissions
           chmod 600 keys/yandex-service-account-key.json
           chmod 600 keys/yandex_provisioning_key
           chmod 644 keys/yandex_provisioning_key.pub
+
+          # Verify JSON file is valid - show first 200 chars
+          echo "Verifying service account key JSON..."
+          echo "File content (first 200 chars):"
+          head -c 200 keys/yandex-service-account-key.json
+          echo ""
 
           # Stop existing services
           echo "Stopping existing services..."
