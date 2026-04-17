@@ -96,9 +96,14 @@ jobs:
           echo "Stopping existing services..."
           docker compose down || true
 
-          # Rebuild and start services using Task
+          # Pull latest base images for better caching
+          echo "Pulling latest base images..."
+          docker pull golang:1.25-alpine || true
+          docker pull alpine:latest || true
+
+          # Rebuild and start services using Task (with cache)
           echo "Building and deploying services..."
-          task rebuild
+          task build
 
           # Wait for services to be healthy
           echo "Waiting for services to be healthy..."
