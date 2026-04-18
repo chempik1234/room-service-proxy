@@ -4,15 +4,18 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
+	"github.com/chempik1234/room-service-proxy/internal/models"
+	"github.com/chempik1234/room-service-proxy/internal/ports"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
 
-// User represents a user in the system
+// User represents a user in the system (HTTP layer DTO)
 type User struct {
 	ID        string    `json:"id"`
 	Email     string    `json:"email"`
@@ -23,12 +26,16 @@ type User struct {
 
 // AuthAPI handles authentication operations
 type AuthAPI struct {
-	db *pgxpool.Pool
+	userStorage      ports.UserStorage
+	authTokenStorage ports.AuthTokenStorage
 }
 
-// NewAuthAPI creates a new auth API
-func NewAuthAPI(db *pgxpool.Pool) *AuthAPI {
-	return &AuthAPI{db: db}
+// NewAuthAPI creates a new auth API with storage repositories
+func NewAuthAPI(userStorage ports.UserStorage, authTokenStorage ports.AuthTokenStorage) *AuthAPI {
+	return &AuthAPI{
+		userStorage:      userStorage,
+		authTokenStorage: authTokenStorage,
+	}
 }
 
 // SignupRequest represents a signup request
@@ -92,8 +99,7 @@ func (auth *AuthAPI) Signup(c *gin.Context) {
 	ctx := context.Background()
 
 	// Check if user already exists
-	var existingUser string
-	err := auth.db.QueryRow(ctx, "SELECT id FROM users WHERE email = $1", req.Email).Scan(&existingUser)
+	_, err := auth.userStorage.GetUserByEmail(ctx, req.Email)
 	if err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
 		return
@@ -114,10 +120,15 @@ func (auth *AuthAPI) Signup(c *gin.Context) {
 	}
 
 	// Create user
-	_, err = auth.db.Exec(ctx,
-		"INSERT INTO users (id, email, password_hash, name, role) VALUES ($1, $2, $3, $4, 'user')",
-		userID, req.Email, hashedPassword, req.Name)
-	if err != nil {
+	user := &models.User{
+		ID:           userID,
+		Email:        req.Email,
+		PasswordHash: hashedPassword,
+		Name:         req.Name,
+		Role:         "user",
+	}
+
+	if err := auth.userStorage.CreateUser(ctx, user); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 		return
 	}
@@ -125,47 +136,27 @@ func (auth *AuthAPI) Signup(c *gin.Context) {
 	// Generate token
 	token := generateToken()
 
-	// Store token in database (you might want to use Redis for this in production)
-	_, err = auth.db.Exec(ctx,
-		"INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)",
-		token, userID, time.Now().Add(30*24*time.Hour))
-	if err != nil {
-		// If token storage fails, try to create the table first
-		_, createErr := auth.db.Exec(ctx, `
-			CREATE TABLE IF NOT EXISTS auth_tokens (
-				token TEXT PRIMARY KEY,
-				user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-				expires_at TIMESTAMP NOT NULL,
-				created_at TIMESTAMP DEFAULT NOW()
-			)
-		`)
-		if createErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to setup authentication"})
-			return
-		}
-
-		// Retry storing token
-		_, err = auth.db.Exec(ctx,
-			"INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)",
-			token, userID, time.Now().Add(30*24*time.Hour))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-			return
-		}
+	// Store token
+	authToken := &models.AuthToken{
+		Token:     token,
+		UserID:    userID,
+		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
 	}
 
-	// Get created user
-	user := User{
-		ID:        userID,
-		Email:     req.Email,
-		Name:      req.Name,
-		Role:      "user",
-		CreatedAt: time.Now(),
+	if err := auth.authTokenStorage.CreateToken(ctx, authToken); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
 	}
 
 	c.JSON(http.StatusCreated, AuthResponse{
 		Token: token,
-		User:  user,
+		User: User{
+			ID:        user.ID,
+			Email:     user.Email,
+			Name:      user.Name,
+			Role:      user.Role,
+			CreatedAt: user.CreatedAt,
+		},
 	})
 }
 
@@ -179,18 +170,15 @@ func (auth *AuthAPI) Login(c *gin.Context) {
 
 	ctx := context.Background()
 
-	// Get user
-	var userID, passwordHash, name, role string
-	err := auth.db.QueryRow(ctx,
-		"SELECT id, password_hash, name, role FROM users WHERE email = $1",
-		req.Email).Scan(&userID, &passwordHash, &name, &role)
+	// Get user by email
+	user, err := auth.userStorage.GetUserByEmail(ctx, req.Email)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
 
 	// Check password
-	if !checkPassword(req.Password, passwordHash) {
+	if !checkPassword(req.Password, user.PasswordHash) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -199,40 +187,26 @@ func (auth *AuthAPI) Login(c *gin.Context) {
 	token := generateToken()
 
 	// Store token
-	_, err = auth.db.Exec(ctx,
-		"INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)",
-		token, userID, time.Now().Add(30*24*time.Hour))
-	if err != nil {
-		// Create table if it doesn't exist
-		_, _ = auth.db.Exec(ctx, `
-			CREATE TABLE IF NOT EXISTS auth_tokens (
-				token TEXT PRIMARY KEY,
-				user_id TEXT REFERENCES users(id) ON DELETE CASCADE,
-				expires_at TIMESTAMP NOT NULL,
-				created_at TIMESTAMP DEFAULT NOW()
-			)
-		`)
-		// Retry storing token
-		_, err = auth.db.Exec(ctx,
-			"INSERT INTO auth_tokens (token, user_id, expires_at) VALUES ($1, $2, $3)",
-			token, userID, time.Now().Add(30*24*time.Hour))
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
-			return
-		}
+	authToken := &models.AuthToken{
+		Token:     token,
+		UserID:    user.ID,
+		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
 	}
 
-	user := User{
-		ID:        userID,
-		Email:     req.Email,
-		Name:      name,
-		Role:      role,
-		CreatedAt: time.Now(), // You might want to fetch the actual created_at from DB
+	if err := auth.authTokenStorage.CreateToken(ctx, authToken); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create session"})
+		return
 	}
 
 	c.JSON(http.StatusOK, AuthResponse{
 		Token: token,
-		User:  user,
+		User: User{
+			ID:        user.ID,
+			Email:     user.Email,
+			Name:      user.Name,
+			Role:      user.Role,
+			CreatedAt: user.CreatedAt,
+		},
 	})
 }
 
@@ -240,35 +214,23 @@ func (auth *AuthAPI) Login(c *gin.Context) {
 func (auth *AuthAPI) GetUserFromToken(token string) (*User, error) {
 	ctx := context.Background()
 
-	// Get user ID from token
-	var userID string
-	var expiresAt time.Time
-	err := auth.db.QueryRow(ctx,
-		"SELECT user_id, expires_at FROM auth_tokens WHERE token = $1",
-		token).Scan(&userID, &expiresAt)
+	// Get token from storage
+	authToken, err := auth.authTokenStorage.GetToken(ctx, token)
 	if err != nil {
-		return nil, err
-	}
-
-	// Check if token is expired
-	if time.Now().After(expiresAt) {
-		return nil, http.ErrNoCookie
+		return nil, fmt.Errorf("invalid or expired token")
 	}
 
 	// Get user details
-	var email, name, role string
-	err = auth.db.QueryRow(ctx,
-		"SELECT email, name, role FROM users WHERE id = $1",
-		userID).Scan(&email, &name, &role)
+	user, err := auth.userStorage.GetUserByID(ctx, authToken.UserID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("user not found")
 	}
 
 	return &User{
-		ID:    userID,
-		Email: email,
-		Name:  name,
-		Role:  role,
+		ID:        user.ID,
+		Email:     user.Email,
+		Name:      user.Name,
+		Role:      user.Role,
 	}, nil
 }
 
@@ -286,10 +248,12 @@ func (auth *AuthAPI) Logout(c *gin.Context) {
 		token = token[7:]
 	}
 
-	// Delete token from database
-	_, err := auth.db.Exec(context.Background(),
-		"DELETE FROM auth_tokens WHERE token = $1", token)
-	if err != nil {
+	// Delete token from storage
+	if err := auth.authTokenStorage.DeleteToken(context.Background(), token); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Token not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to logout"})
 		return
 	}

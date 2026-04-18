@@ -13,60 +13,81 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/chempik1234/room-service-proxy/internal/ports"
+	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
 	"github.com/chempik1234/room-service-proxy/internal/tenant"
 )
 
 // AdminAPI handles HTTP API requests for tenant management
 type AdminAPI struct {
-	db          *pgxpool.Pool
-	adminAPIKey string
-	tenantSvc   *tenant.Service
-	authAPI     *AuthAPI
+	db                *pgxpool.Pool
+	storageRepo       ports.TenantStorage
+	userStorage       ports.UserStorage
+	authTokenStorage  ports.AuthTokenStorage
+	requestLogStorage ports.RequestLogStorage
+	adminAPIKey       string
+	tenantSvc         *tenant.Service
+	authAPI           *AuthAPI
 }
 
-// NewAdminAPI creates a new admin API with database URL and deployment provider configuration
-func NewAdminAPI(dbURL string, adminAPIKey string, deploymentProvider string, deploymentConfig map[string]string) (*AdminAPI, error) {
-	// Create database connection for AuthAPI
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	db, err := pgxpool.New(ctx, dbURL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-
+// NewAdminAPI creates a new admin API with storage repositories and deployment provider configuration
+//
+// This follows the dependency injection pattern where all repositories are created in main.go
+// and passed to the service constructor, rather than creating them inside the service.
+//
+// Args:
+//   - db: Database connection pool for direct queries (legacy, will be removed)
+//   - adminAPIKey: API key for admin authentication
+//   - storageRepo: Tenant storage repository for tenant data operations
+//   - userStorage: User storage repository for user management
+//   - authTokenStorage: Auth token storage for session management
+//   - requestLogStorage: Request log storage for analytics
+//   - deploymentProvider: Cloud provider to use ("railway", "yandex", "docker")
+//   - deploymentConfig: Provider-specific configuration
+//
+// Returns configured AdminAPI instance or error if tenant service creation fails
+func NewAdminAPI(db *pgxpool.Pool, adminAPIKey string, storageRepo ports.TenantStorage, userStorage ports.UserStorage, authTokenStorage ports.AuthTokenStorage, requestLogStorage ports.RequestLogStorage, deploymentProvider string, deploymentConfig map[string]string) (*AdminAPI, error) {
 	// Create tenant service using factory function based on deployment provider
 	var tenantSvc *tenant.Service
+	var err error
+
 	switch deploymentProvider {
 	case "railway":
 		railwayToken := deploymentConfig["railway_token"]
 		railwayProjectID := deploymentConfig["railway_project_id"]
 		railwayEnvironmentID := deploymentConfig["railway_environment_id"]
-		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndRailway(dbURL, railwayToken, railwayProjectID, railwayEnvironmentID)
+		deployer := adapters.NewRailwayServiceDeployer(railwayToken, railwayProjectID, railwayEnvironmentID)
+		tenantSvc, err = tenant.NewTenantServiceFromAdapters(storageRepo, deployer)
 	case "yandex":
 		yandexFolderID := deploymentConfig["yandex_folder_id"]
 		yandexZone := deploymentConfig["yandex_zone"]
 		yandexSubnetID := deploymentConfig["yandex_subnet_id"]
 		yandexServiceAccountKey := deploymentConfig["yandex_service_account_key"]
 		yandexSSHKeyPath := deploymentConfig["yandex_ssh_key_path"]
-		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndYandex(dbURL, yandexFolderID, yandexZone, yandexSubnetID, yandexServiceAccountKey, yandexSSHKeyPath)
+		deployer, createErr := adapters.NewYandexServiceDeployer(yandexFolderID, yandexZone, yandexSubnetID, yandexServiceAccountKey, yandexSSHKeyPath)
+		if createErr != nil {
+			return nil, fmt.Errorf("failed to create yandex deployer: %w", createErr)
+		}
+		tenantSvc, err = tenant.NewTenantServiceFromAdapters(storageRepo, deployer)
 	case "docker":
-		tenantSvc, err = tenant.NewTenantServiceWithPostgresAndDocker(dbURL)
+		// Docker adapter is currently disabled
+		return nil, fmt.Errorf("docker adapter is currently disabled; please use Railway deployment instead")
 	default:
-		db.Close()
 		return nil, fmt.Errorf("unknown deployment provider: %s", deploymentProvider)
 	}
 
 	if err != nil {
-		db.Close()
 		return nil, fmt.Errorf("failed to create tenant service: %w", err)
 	}
 
 	return &AdminAPI{
-		db:          db,
-		adminAPIKey: adminAPIKey,
-		tenantSvc:   tenantSvc,
-		authAPI:     NewAuthAPI(db),
+		db:                db,
+		storageRepo:       storageRepo,
+		userStorage:       userStorage,
+		authTokenStorage:  authTokenStorage,
+		requestLogStorage: requestLogStorage,
+		adminAPIKey:       adminAPIKey,
+		tenantSvc:         tenantSvc,
+		authAPI:           NewAuthAPI(userStorage, authTokenStorage),
 	}, nil
 }
 
@@ -408,16 +429,18 @@ func (api *AdminAPI) regenerateAPIKey(c *gin.Context) {
 // healthCheck returns health status
 func (api *AdminAPI) healthCheck(c *gin.Context) {
 	// Check database connection with timeout
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
-	defer cancel()
+	/*
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
 
-	if err := api.db.Ping(ctx); err != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"status": "unhealthy",
-			"error":  "Database connection failed",
-		})
-		return
-	}
+		if err := api.db.Ping(ctx); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "unhealthy",
+				"error":  "Database connection failed",
+			})
+			return
+		}
+	*/
 
 	c.JSON(http.StatusOK, gin.H{
 		"status": "healthy",
@@ -439,10 +462,7 @@ func (api *AdminAPI) status(c *gin.Context) {
 	}
 
 	// Get recent request count
-	var requestCount int64
-	err = api.db.QueryRow(c.Request.Context(),
-		"SELECT COUNT(*) FROM request_logs WHERE created_at > NOW() - INTERVAL '1 hour'").
-		Scan(&requestCount)
+	requestCount, err := api.requestLogStorage.GetRecentRequestCount(c.Request.Context(), "1 hour")
 	if err == nil {
 		status["requests_last_hour"] = requestCount
 	}
@@ -496,9 +516,10 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 	// Get total requests from logs - filter by user's tenants if not admin
 	var totalRequests int64
 	if authType == "admin" {
-		err = api.db.QueryRow(c.Request.Context(),
-			"SELECT COUNT(*) FROM request_logs").
-			Scan(&totalRequests)
+		totalRequests, err = api.requestLogStorage.GetTotalRequestCount(c.Request.Context())
+		if err != nil {
+			totalRequests = 0
+		}
 	} else {
 		// For regular users, count only requests for their tenants
 		tenantIDs := make([]string, len(tenants))
@@ -506,14 +527,10 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 			tenantIDs[i] = tenant.ID
 		}
 
-		err = api.db.QueryRow(c.Request.Context(),
-			"SELECT COUNT(*) FROM request_logs WHERE tenant_id = ANY($1)",
-			tenantIDs).
-			Scan(&totalRequests)
-	}
-
-	if err != nil {
-		totalRequests = 0
+		totalRequests, err = api.requestLogStorage.GetRequestCountByTenants(c.Request.Context(), tenantIDs)
+		if err != nil {
+			totalRequests = 0
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{

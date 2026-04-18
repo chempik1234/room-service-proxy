@@ -7,9 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/chempik1234/super-danis-library-golang/v2/pkg/logger"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/google/uuid"
 	"github.com/mwitkow/grpc-proxy/proxy"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -20,7 +19,7 @@ import (
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
 	"github.com/chempik1234/room-service-proxy/internal/ports"
-	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
+	"github.com/chempik1234/room-service-proxy/internal/ports/adapters/postgres"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
 )
 
@@ -34,18 +33,18 @@ const (
 
 // Service handles gRPC proxying
 type Service struct {
-	db      *pgxpool.Pool
-	limiter *ratelimit.Limiter
-	config  *config.Config
-	logger  *logger.Logger // Application logger (not request-scoped)
+	storageRepo *postgres.PostgresTenantStorage
+	limiter     *ratelimit.Limiter
+	config      *config.Config
+	logger      *logger.Logger // Application logger (not request-scoped)
 	// Connection pool for tenant VMs
 	tenantConns sync.Map // map[string]*grpc.ClientConn
 }
 
 // NewService creates a new proxy service
-func NewService(db *pgxpool.Pool, limiter *ratelimit.Limiter, cfg *config.Config, appLogger *logger.Logger) *Service {
+func NewService(storageRepo *postgres.PostgresTenantStorage, limiter *ratelimit.Limiter, cfg *config.Config, appLogger *logger.Logger) *Service {
 	return &Service{
-		db:          db,
+		storageRepo: storageRepo,
 		limiter:     limiter,
 		config:      cfg,
 		logger:      appLogger,
@@ -122,7 +121,7 @@ func (s *Service) getDirector() proxy.StreamDirector {
 	return func(ctx context.Context, fullMethodName string) (context.Context, grpc.ClientConnInterface, error) {
 		log, requestID := s.getRequestLoggerFromContext(ctx)
 
-		// Extract tenant info from context
+		// Extract tenant info from context (this also validates API key)
 		tenant, err := s.extractTenantFromContext(ctx)
 		if err != nil {
 			log.Warn(ctx, "Routing failed: tenant not found in context",
@@ -148,8 +147,19 @@ func (s *Service) getDirector() proxy.StreamDirector {
 			zap.String("tenant_id", tenant.ID),
 			zap.String("target", target))
 
+		// CRITICAL: Forward API key metadata to tenant VM
+		// The tenant VM expects to receive the original API key for its own authentication
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			// If no metadata, create empty metadata for outgoing context
+			md = metadata.MD{}
+		}
+
+		// Create outgoing context with API key forwarded to tenant VM
+		outCtx := metadata.NewOutgoingContext(ctx, md)
+
 		// Return context with connection for proxy library to handle
-		return ctx, conn, nil
+		return outCtx, conn, nil
 	}
 }
 
@@ -191,6 +201,14 @@ func (s *Service) getTenantConnection(tenant *ports.Tenant, log *logger.Logger) 
 }
 
 // authInterceptor validates authentication
+//
+// This is the FIRST interceptor in the chain. It:
+// 1. Extracts and validates the API key (does database query)
+// 2. Stores the tenant in context for subsequent interceptors
+// 3. Returns updated context that flows to next interceptors
+//
+// Subsequent interceptors (rateLimitInterceptor, loggingInterceptor) will
+// retrieve the tenant from context instead of re-querying the database.
 func (s *Service) authInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	log, requestID := s.getRequestLoggerFromContext(ctx)
 
@@ -218,18 +236,26 @@ func (s *Service) authInterceptor(ctx context.Context, req interface{}, info *gr
 		zap.String("request_id", requestID),
 		zap.String("tenant_id", tenant.ID))
 
-	// Store tenant in context for director to use
+	// Store tenant in context for director and subsequent interceptors to use
+	// This avoids redundant database queries in rateLimitInterceptor and loggingInterceptor
 	ctx = context.WithValue(ctx, tenantKey, tenant)
 
 	return handler(ctx, req)
 }
 
 // rateLimitInterceptor checks rate limits
+//
+// This is the SECOND interceptor in the chain. It retrieves the tenant from context
+// (cached by authInterceptor) instead of doing a database query.
+//
+// The tenant was validated and stored in context by authInterceptor, so this
+// interceptor only checks rate limits without redundant database lookups.
 func (s *Service) rateLimitInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	if !s.config.EnableRateLimit {
 		return handler(ctx, req)
 	}
 
+	// Retrieve tenant from context (no database query - cached by authInterceptor)
 	tenant, err := s.extractTenantFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -246,7 +272,8 @@ func (s *Service) rateLimitInterceptor(ctx context.Context, req interface{}, inf
 func (s *Service) loggingInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	startTime := time.Now()
 
-	// Get tenant from context
+	// Get tenant from context (no database query - cached by authInterceptor)
+	// This avoids redundant database lookups since tenant was already validated
 	tenantID := "unknown"
 	if tenant, ok := ctx.Value(tenantKey).(*ports.Tenant); ok {
 		tenantID = tenant.ID
@@ -262,6 +289,14 @@ func (s *Service) loggingInterceptor(ctx context.Context, req interface{}, info 
 }
 
 // authStreamInterceptor validates authentication for streams
+//
+// This is the FIRST stream interceptor in the chain. It:
+// 1. Extracts and validates the API key (does database query)
+// 2. Stores the tenant in context for subsequent interceptors
+// 3. Updates the server stream with the new context
+//
+// Subsequent stream interceptors will retrieve the tenant from context instead
+// of re-querying the database, avoiding redundant lookups.
 func (s *Service) authStreamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	ctx := ss.Context()
 	log, requestID := s.getRequestLoggerFromContext(ctx)
@@ -290,7 +325,8 @@ func (s *Service) authStreamInterceptor(srv interface{}, ss grpc.ServerStream, i
 		zap.String("request_id", requestID),
 		zap.String("tenant_id", tenant.ID))
 
-	// Store tenant in context for director to use
+	// Store tenant in context for director and subsequent interceptors to use
+	// This avoids redundant database queries in rateLimitStreamInterceptor
 	ctx = context.WithValue(ctx, tenantKey, tenant)
 
 	// Update context in server stream
@@ -303,6 +339,12 @@ func (s *Service) authStreamInterceptor(srv interface{}, ss grpc.ServerStream, i
 }
 
 // rateLimitStreamInterceptor checks rate limits for streams
+//
+// This is the SECOND stream interceptor in the chain. It retrieves the tenant from context
+// (cached by authStreamInterceptor) instead of doing a database query.
+//
+// The tenant was validated and stored in context by authStreamInterceptor, so this
+// interceptor only checks rate limits without redundant database lookups.
 func (s *Service) rateLimitStreamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	ctx := ss.Context()
 
@@ -310,6 +352,7 @@ func (s *Service) rateLimitStreamInterceptor(srv interface{}, ss grpc.ServerStre
 		return handler(srv, ss)
 	}
 
+	// Retrieve tenant from context (no database query - cached by authStreamInterceptor)
 	tenant, err := s.extractTenantFromContext(ctx)
 	if err != nil {
 		return err
@@ -343,7 +386,17 @@ func (s *Service) loggingStreamInterceptor(srv interface{}, ss grpc.ServerStream
 }
 
 // extractTenantFromContext extracts tenant from context metadata
+//
+// IMPORTANT: This function checks if tenant is already in context before querying database.
+// The first call (from authInterceptor) does the database lookup and stores tenant in context.
+// Subsequent calls (from rateLimitInterceptor, loggingInterceptor) retrieve from context, avoiding
+// redundant database queries for the same request.
 func (s *Service) extractTenantFromContext(ctx context.Context) (*ports.Tenant, error) {
+	// Check if tenant is already in context (cached by previous interceptor)
+	if tenant, ok := ctx.Value(tenantKey).(*ports.Tenant); ok {
+		return tenant, nil
+	}
+
 	if !s.config.EnableAuth {
 		// Return default tenant for testing
 		return &ports.Tenant{
@@ -368,18 +421,13 @@ func (s *Service) extractTenantFromContext(ctx context.Context) (*ports.Tenant, 
 		return nil, status.Error(codes.Unauthenticated, "Empty API key")
 	}
 
-	// Validate tenant
+	// Validate tenant (database query happens here only once per request)
 	return s.validateTenant(ctx, apiKey)
 }
 
 // validateTenant validates the tenant and returns tenant info
 func (s *Service) validateTenant(ctx context.Context, apiKey string) (*ports.Tenant, error) {
-	tenantRepo, err := adapters.NewPostgresTenantStorage(s.db)
-	if err != nil {
-		return nil, status.Error(codes.Internal, "Failed to create tenant repository")
-	}
-
-	tenant, err := tenantRepo.GetTenantByAPIKey(ctx, apiKey)
+	tenant, err := s.storageRepo.GetTenantByAPIKey(ctx, apiKey)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, "Invalid API key")
 	}
@@ -455,7 +503,6 @@ func processSingleLogEntry(entry logEntry) {
 			entry.tenantID, entry.method, entry.statusCode, entry.latencyMs)
 	}
 }
-
 
 // contextServerStream wraps ServerStream to override context
 type contextServerStream struct {
