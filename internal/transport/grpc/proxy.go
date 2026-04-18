@@ -37,16 +37,18 @@ type Service struct {
 	db      *pgxpool.Pool
 	limiter *ratelimit.Limiter
 	config  *config.Config
+	logger  *logger.Logger // Application logger (not request-scoped)
 	// Connection pool for tenant VMs
 	tenantConns sync.Map // map[string]*grpc.ClientConn
 }
 
 // NewService creates a new proxy service
-func NewService(db *pgxpool.Pool, limiter *ratelimit.Limiter, cfg *config.Config) *Service {
+func NewService(db *pgxpool.Pool, limiter *ratelimit.Limiter, cfg *config.Config, appLogger *logger.Logger) *Service {
 	return &Service{
 		db:          db,
 		limiter:     limiter,
 		config:      cfg,
+		logger:      appLogger,
 		tenantConns: sync.Map{},
 	}
 }
@@ -73,18 +75,10 @@ func (s *Service) GetProxyServer() *grpc.Server {
 	return server
 }
 
-// requestIDUnaryInterceptor generates request ID and injects logger into context
+// requestIDUnaryInterceptor generates request ID and injects into context
 func (s *Service) requestIDUnaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 	// Generate request ID
 	requestID := uuid.New().String()
-
-	// Create base context with logger if not exists
-	baseCtx := context.Background()
-	if _, err := logger.New(baseCtx); err != nil {
-		// Fallback: store request ID directly in context
-		ctx = context.WithValue(ctx, loggerKey, requestID)
-		return handler(ctx, req)
-	}
 
 	// Store request ID in context for later use
 	ctx = context.WithValue(ctx, loggerKey, requestID)
@@ -92,24 +86,12 @@ func (s *Service) requestIDUnaryInterceptor(ctx context.Context, req interface{}
 	return handler(ctx, req)
 }
 
-// requestIDStreamInterceptor generates request ID and injects logger into context for streams
+// requestIDStreamInterceptor generates request ID and injects into context for streams
 func (s *Service) requestIDStreamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	ctx := ss.Context()
 
 	// Generate request ID
 	requestID := uuid.New().String()
-
-	// Create base context with logger if not exists
-	baseCtx := context.Background()
-	if _, err := logger.New(baseCtx); err != nil {
-		// Fallback: store request ID directly in context
-		ctx = context.WithValue(ctx, loggerKey, requestID)
-		ss = &contextServerStream{
-			ServerStream: ss,
-			ctx:          ctx,
-		}
-		return handler(srv, ss)
-	}
 
 	// Store request ID in context for later use
 	ctx = context.WithValue(ctx, loggerKey, requestID)
@@ -131,17 +113,11 @@ func (s *Service) getRequestIDFromContext(ctx context.Context) string {
 	return "unknown"
 }
 
-// createLoggerWithRequestID creates a logger with request ID
+// createLoggerWithRequestID creates request-scoped logger with request ID
 func (s *Service) createLoggerWithRequestID(ctx context.Context) *logger.Logger {
-	// Create base context with logger
-	baseCtx := context.Background()
-	if _, err := logger.New(baseCtx); err != nil {
-		// Fallback: return a basic logger
-		return &logger.Logger{}
-	}
-
-	// Return the base logger (request ID will be added as field in log calls)
-	return logger.GetLoggerFromCtx(baseCtx)
+	// Return the application logger
+	// Request ID will be added as field in each log call
+	return s.logger
 }
 
 // getDirector returns a director function that routes requests to tenant VMs

@@ -52,7 +52,8 @@ func main() {
 		zap.Int("burst", cfg.RateLimitBurst))
 
 	// Initialize proxy service
-	proxyService := transportgrpc.NewService(db, limiter, cfg)
+	appLogger := logger.GetLoggerFromCtx(ctx)
+	proxyService := transportgrpc.NewService(db, limiter, cfg, appLogger)
 
 	// Setup graceful shutdown
 	setupGracefulShutdown(db, ctx)
