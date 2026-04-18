@@ -17,9 +17,9 @@ import (
 	transportHttp "github.com/chempik1234/room-service-proxy/internal/transport/http"
 	"github.com/chempik1234/super-danis-library-golang/v2/pkg/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
-	"go.uber.org/zap"
 )
 
 func main() {
@@ -138,7 +138,7 @@ func startAdminAPIServer(cfg *config.Config, ctx context.Context) {
 		Handler:      router,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
-		IdleTimeout:   60 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	logger.GetLoggerFromCtx(ctx).Info(ctx, "Admin API server started", zap.Int("port", cfg.AdminPort), zap.String("deployment_provider", cfg.DeploymentProvider))

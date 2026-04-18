@@ -14,11 +14,11 @@ import (
 
 // User represents a user in the system
 type User struct {
-	ID           string    `json:"id"`
-	Email        string    `json:"email"`
-	Name         string    `json:"name"`
-	Role         string    `json:"role"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 // AuthAPI handles authentication operations
@@ -47,7 +47,7 @@ type LoginRequest struct {
 // AuthResponse represents an authentication response
 type AuthResponse struct {
 	Token string `json:"token"`
-	User  User  `json:"user"`
+	User  User   `json:"user"`
 }
 
 // generateUserID generates a unique user ID
@@ -265,10 +265,10 @@ func (auth *AuthAPI) GetUserFromToken(token string) (*User, error) {
 	}
 
 	return &User{
-		ID:   userID,
+		ID:    userID,
 		Email: email,
-		Name: name,
-		Role: role,
+		Name:  name,
+		Role:  role,
 	}, nil
 }
 

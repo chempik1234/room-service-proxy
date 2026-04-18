@@ -44,12 +44,12 @@ func (r *RailwayServiceDeployer) DeployDatabase(ctx context.Context, tenantID st
 
 	return dto.DatabaseDeployment{
 		ConnectionString: mongoURL,
-		Host:            host,
-		Port:            port,
-		Username:        "admin",
-		Password:        password,
-		Database:        "rooms_db",
-		Type:            "mongodb",
+		Host:             host,
+		Port:             port,
+		Username:         "admin",
+		Password:         password,
+		Database:         "rooms_db",
+		Type:             "mongodb",
 	}, nil
 }
 
@@ -66,11 +66,11 @@ func (r *RailwayServiceDeployer) DeployCache(ctx context.Context, tenantID strin
 
 	return dto.CacheDeployment{
 		ConnectionString: redisURL,
-		Host:            host,
-		Port:            port,
-		Password:        password,
-		DB:              0,
-		Type:            "redis",
+		Host:             host,
+		Port:             port,
+		Password:         password,
+		DB:               0,
+		Type:             "redis",
 	}, nil
 }
 

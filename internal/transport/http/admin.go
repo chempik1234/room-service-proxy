@@ -566,7 +566,7 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 		}
 
 		// Query logs only for user's tenants
-			//nolint:staticcheck // error is checked on line 541
+		//nolint:staticcheck // error is checked on line 541
 		rows, err = api.db.Query(c.Request.Context(),
 			`SELECT tenant_id, method, path, status_code, response_time, created_at
 			 FROM request_logs

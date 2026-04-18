@@ -35,8 +35,8 @@ type Config struct {
 	DeploymentProvider string // "railway", "yandex", or "docker"
 
 	// Railway config
-	RailwayToken        string
-	RailwayProjectID    string
+	RailwayToken         string
+	RailwayProjectID     string
 	RailwayEnvironmentID string
 
 	// Yandex Cloud config
@@ -44,7 +44,7 @@ type Config struct {
 	YandexZone              string
 	YandexSubnetID          string
 	YandexServiceAccountKey string
-	YandexSSHKeyPath         string
+	YandexSSHKeyPath        string
 }
 
 // Load loads configuration from environment variables
@@ -76,8 +76,8 @@ func Load() (*Config, error) {
 		DeploymentProvider: getEnv("DEPLOYMENT_PROVIDER", "railway"),
 
 		// Railway config
-		RailwayToken:        getEnv("RAILWAY_TOKEN", ""),
-		RailwayProjectID:    getEnv("RAILWAY_PROJECT_ID", ""),
+		RailwayToken:         getEnv("RAILWAY_TOKEN", ""),
+		RailwayProjectID:     getEnv("RAILWAY_PROJECT_ID", ""),
 		RailwayEnvironmentID: getEnv("RAILWAY_ENVIRONMENT_ID", ""),
 
 		// Yandex Cloud config
@@ -85,7 +85,7 @@ func Load() (*Config, error) {
 		YandexZone:              getEnv("YANDEX_ZONE", "ru-central1-a"),
 		YandexSubnetID:          getEnv("YANDEX_SUBNET_ID", ""),
 		YandexServiceAccountKey: getEnv("YANDEX_SERVICE_ACCOUNT_KEY", ""),
-		YandexSSHKeyPath:         getEnv("YANDEX_SSH_KEY_PATH", ""),
+		YandexSSHKeyPath:        getEnv("YANDEX_SSH_KEY_PATH", ""),
 	}
 
 	// Validate required fields

@@ -17,9 +17,9 @@ type Limiter struct {
 
 // tenantLimiter holds rate limiting state for a single tenant
 type tenantLimiter struct {
-	tokens    int
+	tokens     int
 	lastRefill time.Time
-	mu        sync.Mutex
+	mu         sync.Mutex
 }
 
 // NewLimiter creates a new rate limiter

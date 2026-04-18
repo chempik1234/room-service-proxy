@@ -3,22 +3,22 @@ package dto
 // DatabaseDeployment contains information about a deployed database
 type DatabaseDeployment struct {
 	ConnectionString string
-	Host            string
-	Port            int
-	Username        string
-	Password        string // Caller should store securely if needed
-	Database        string
-	Type            string // "mongodb", "postgresql", etc.
+	Host             string
+	Port             int
+	Username         string
+	Password         string // Caller should store securely if needed
+	Database         string
+	Type             string // "mongodb", "postgresql", etc.
 }
 
 // CacheDeployment contains information about a deployed cache
 type CacheDeployment struct {
 	ConnectionString string
-	Host            string
-	Port            int
-	Password        string // Caller should store securely if needed
-	DB              int    // Redis database number
-	Type            string // "redis", "memcached", etc.
+	Host             string
+	Port             int
+	Password         string // Caller should store securely if needed
+	DB               int    // Redis database number
+	Type             string // "redis", "memcached", etc.
 }
 
 // ApplicationDeployment contains information about a deployed application
@@ -54,8 +54,8 @@ type DeploymentStatus struct {
 
 // ServiceStatus represents the status of an individual service
 type ServiceStatus struct {
-	Name   string
-	Type   string // "database", "cache", "application"
+	Name    string
+	Type    string // "database", "cache", "application"
 	Healthy bool
-	Status string
+	Status  string
 }

@@ -12,9 +12,9 @@ import (
 
 // Service handles tenant business logic
 type Service struct {
-	storage           ports.TenantStorage     // Tenant storage port
-	deployer          ports.ServiceDeployer   // Service deployment port
-	provisioningQueue chan *ports.Tenant            // Queue for async provisioning
+	storage           ports.TenantStorage   // Tenant storage port
+	deployer          ports.ServiceDeployer // Service deployment port
+	provisioningQueue chan *ports.Tenant    // Queue for async provisioning
 }
 
 // NewService creates a new tenant service with storage and deployer interfaces
@@ -94,11 +94,11 @@ func (s *Service) CreateTenantWithProvisioning(ctx context.Context, req *CreateT
 func (s *Service) CreateTenantAsync(ctx context.Context, req *CreateTenantRequest) (*ports.Tenant, error) {
 	// Create tenant record first
 	tenant := &ports.Tenant{
-		UserID:            req.UserID,
-		Name:              req.Name,
-		Email:             req.Email,
-		Plan:              req.Plan,
-		Status:            "provisioning",
+		UserID:             req.UserID,
+		Name:               req.Name,
+		Email:              req.Email,
+		Plan:               req.Plan,
+		Status:             "provisioning",
 		ProvisioningStatus: "pending",
 	}
 

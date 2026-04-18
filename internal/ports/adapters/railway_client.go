@@ -398,7 +398,7 @@ func (r *RailwayService) makeRequest(payload map[string]interface{}) ([]byte, er
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrAPIRequest, err)
 	}
-		defer func() { _ = resp.Body.Close() }()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)

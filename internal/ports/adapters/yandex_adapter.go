@@ -14,16 +14,16 @@ import (
 
 // YandexServiceDeployer implements ServiceDeployer using Yandex Cloud Compute
 type YandexServiceDeployer struct {
-	folderID     string
-	zone         string
-	subnetID     string
+	folderID          string
+	zone              string
+	subnetID          string
 	serviceAccountKey string
-	sshKeyPath    string
-	sshUser      string
-	baseImageID   string
-	platform     string // "standard-v2" or "standard-v3"
-	coreFraction int    // Core fraction percentage (5, 20, 100)
-	memory       int    // Memory in GB
+	sshKeyPath        string
+	sshUser           string
+	baseImageID       string
+	platform          string // "standard-v2" or "standard-v3"
+	coreFraction      int    // Core fraction percentage (5, 20, 100)
+	memory            int    // Memory in GB
 }
 
 // NewYandexServiceDeployer creates a new Yandex Cloud deployer
@@ -43,110 +43,200 @@ func NewYandexServiceDeployer(folderID, zone, subnetID, serviceAccountKey, sshKe
 		subnetID:          subnetID,
 		serviceAccountKey: serviceAccountKey,
 		sshKeyPath:        sshKeyPath,
-		sshUser:          "yc-user", // Yandex Cloud creates 'yc-user' when using --ssh-key
-		baseImageID:      "fd8qbv9cd4p6tcp1f4dj0",
-		platform:         "standard-v2", // 2 vCPU
-		coreFraction:     20,              // 20% guaranteed CPU (cost-effective)
-		memory:           2,               // 4 GB RAM
+		sshUser:           "yc-user", // Yandex Cloud creates 'yc-user' when using --ssh-key
+		baseImageID:       "fd8qbv9cd4p6tcp1f4dj0",
+		platform:          "standard-v2", // 2 vCPU
+		coreFraction:      20,            // 20% guaranteed CPU (cost-effective)
+		memory:            4,             // 4 GB RAM
 	}, nil
 }
 
 // DeployDatabase deploys MongoDB using Docker on Yandex compute instance
 func (y *YandexServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error) {
-	instanceName := fmt.Sprintf("%s-mongo", tenantID)
-	password := generateRandomPassword(32)
+	/*
+			instanceName := fmt.Sprintf("%s-mongo", tenantID)
+			password := generateRandomPassword(32)
 
-	// Read SSH public key
-	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
-	if err != nil {
-		return dto.DatabaseDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
-	}
+			// Read SSH public key
+			sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
+			if err != nil {
+				return dto.DatabaseDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
+			}
 
-	// Create cloud-config for MongoDB with proper YAML format
-	cloudConfig := fmt.Sprintf(`#cloud-config
-ssh_pwauth: no
-users:
-  - name: yc-user
-    sudo: "ALL=(ALL) NOPASSWD:ALL"
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - %s
-runcmd:
-  - apt update
-  - apt install -y docker.io
-  - systemctl enable docker
-  - usermod -aG docker yc-user
-  - systemctl restart docker
-  - docker run -d --name mongodb -p 27017:27017 -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD=%s mongo:6
-bootcmd:
-  - 'if ! docker ps -q -f name=mongodb | grep -q .; then docker start mongodb 2>/dev/null || true; fi'
-`, strings.TrimSpace(string(sshPublicKey)), password)
+			// Create cloud-config for MongoDB with proper YAML format
+			cloudConfig := fmt.Sprintf(`#cloud-config
+		ssh_pwauth: no
+		users:
+		  - name: yc-user
+		    sudo: "ALL=(ALL) NOPASSWD:ALL"
+		    shell: /bin/bash
+		    ssh_authorized_keys:
+		      - %s
+		`, strings.TrimSpace(string(sshPublicKey)))
 
-	// Create compute instance with cloud-config
-	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig)
-	if err != nil {
-		return dto.DatabaseDeployment{}, fmt.Errorf("failed to create MongoDB instance: %w", err)
-	}
+			dockerFileConfig := fmt.Sprintf(`
+		x-room_service-template: &room_service-template
+		  image: chempik1234/roomservice:latest
+		  restart: unless-stopped
+		  # entrypoint: "sleep 1h"
+		  depends_on:
+		    redis:
+		      condition: service_healthy
+		    mongodb:
+		      condition: service_healthy
+		  environment:
+		      - ROOM_SERVICE_GRPC_PORT=50050
+		      - ROOM_SERVICE_USE_AUTH=true
+		      - ROOM_SERVICE_API_KEY=123
+		      - ROOM_SERVICE_RETRY_ATTEMPTS=3
+		      - ROOM_SERVICE_RETRY_DELAY_MILLISECONDS=500
+		      - ROOM_SERVICE_RETRY_BACKOFF=1
+		      - ROOM_SERVICE_LOG_LEVEL=info
+		      - ROOM_SERVICE_ROOMS_MONGODB_DATABASE=rooms_db
+		      - ROOM_SERVICE_ROOMS_MONGODB_ROOMS_COLLECTION=rooms
+		      - ROOM_SERVICE_ROOMS_MONGODB_READ_CONCERN=available
+		      - ROOM_SERVICE_ROOMS_MONGODB_WRITE_CONCERN=w: 0
+		      - ROOM_SERVICE_MONGODB_HOSTS=mongodb:27017
+		      - ROOM_SERVICE_MONGODB_MIN_POOL_SIZE=1
+		      - ROOM_SERVICE_MONGODB_MAX_POOL_SIZE=10
+		      - ROOM_SERVICE_MONGODB_USERNAME=admin
+		      - ROOM_SERVICE_MONGODB_PASSWORD=securepassword
+		      - ROOM_SERVICE_MONGODB_PASSWORD_SET=true
+		      - ROOM_SERVICE_MONGODB_RETRY_WRITES=true
+		      - ROOM_SERVICE_MONGODB_RETRY_READS=true
+		      - ROOM_SERVICE_REDIS_ADDR=redis:6379
+		      - ROOM_SERVICE_REDIS_PASSWORD=redis_pass
+		      - ROOM_SERVICE_REDIS_DB=0
+		      - ROOM_SERVICE_REDIS_TTL_SECONDS=0
+		      - ROOM_SERVICE_REDIS_TIMEOUT_DIAL_MILLISECONDS=5000
+		      - ROOM_SERVICE_REDIS_TIMEOUT_READ_MILLISECONDS=1000
+		      - ROOM_SERVICE_REDIS_TIMEOUT_WRITE_MILLISECONDS=1000
+		      - ROOM_SERVICE_REDIS_RETRIES_MAX_RETRIES=3
+		      - ROOM_SERVICE_REDIS_POOL_SIZE=3
+		      - ROOM_SERVICE_REDIS_POOL_MIN_IDLE_CONNECTIONS=2
 
-	log.Printf("🌐 Deployed MongoDB for tenant %s on Yandex instance %s (IP: %s)", tenantID, instanceName, instanceIP)
+
+		services:
+		  room_service:
+		    <<: *room_service-template
+		    ports:
+		      - "50051:50050"
+		    # scale: 1
+		    networks:
+		      - backend
+
+		  redis:
+		    image: redis:latest
+		    container_name: redis
+		    expose:
+		      - "6379"
+		    environment:
+		      - REDIS_PASSWORD=redis_pass
+		    volumes:
+		      - redis_data:/data
+		    command: ["sh", "-c", "redis-server /usr/local/etc/redis/redis.conf --requirepass $$REDIS_PASSWORD --maxmemory 524288000"]
+		    healthcheck:
+		      test: [ "CMD-SHELL", "redis-cli", "-a", "$$REDIS_PASSWORD", "ping" ]
+		      interval: 30s
+		      timeout: 5s
+		      retries: 3
+		    restart: unless-stopped
+		    networks:
+		      - backend
+
+		  mongodb:
+		    image: mongo:latest
+		    environment:
+		      - MONGO_INITDB_ROOT_USERNAME=admin
+		      - MONGO_INITDB_ROOT_PASSWORD=securepassword
+		      - MONGO_INITDB_DATABASE=rooms_db
+		    volumes:
+		      - mongo_data:/data/db
+		    restart: unless-stopped
+		    healthcheck:
+		      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+		      interval: 30s
+		      timeout: 10s
+		      retries: 5
+		    networks:
+		      - backend
+
+		volumes:
+		  redis_data:
+		  mongo_data:
+
+		networks:
+		  backend:
+		    driver: bridge`)
+
+			// Create compute instance with cloud-config
+			instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig, dockerFileConfig)
+			if err != nil {
+				return dto.DatabaseDeployment{}, fmt.Errorf("failed to create MongoDB instance: %w", err)
+			}
+	*/
+
+	// log.Printf("🌐 Deployed MongoDB for tenant %s on Yandex instance %s (IP: %s)", tenantID, instanceName, instanceIP)
 
 	return dto.DatabaseDeployment{
-		ConnectionString: fmt.Sprintf("mongodb://admin:%s@%s:27017", password, instanceIP),
-		Host:            instanceIP,
-		Port:            27017,
-		Username:        "admin",
-		Password:        password,
-		Database:        "rooms_db",
-		Type:            "mongodb",
+		ConnectionString: fmt.Sprintf("mongodb://admin:%s@%s:27017", "1", "1.1.1.1"),
+		Host:             "1.1.1.1",
+		Port:             27017,
+		Username:         "admin",
+		Password:         "1",
+		Database:         "rooms_db",
+		Type:             "mongodb",
 	}, nil
 }
 
 // DeployCache deploys Redis using Docker on Yandex compute instance
 func (y *YandexServiceDeployer) DeployCache(ctx context.Context, tenantID string) (dto.CacheDeployment, error) {
-	instanceName := fmt.Sprintf("%s-redis", tenantID)
-	password := generateRandomPassword(32)
+	/*
+			instanceName := fmt.Sprintf("%s-redis", tenantID)
+			password := generateRandomPassword(32)
 
-	// Read SSH public key
-	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
-	if err != nil {
-		return dto.CacheDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
-	}
+			// Read SSH public key
+			sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
+			if err != nil {
+				return dto.CacheDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
+			}
 
-	// Create cloud-config for Redis with proper YAML format
-	cloudConfig := fmt.Sprintf(`#cloud-config
-ssh_pwauth: no
-users:
-  - name: yc-user
-    sudo: "ALL=(ALL) NOPASSWD:ALL"
-    shell: /bin/bash
-    ssh_authorized_keys:
-      - %s
-runcmd:
-  - apt update
-  - apt install -y docker.io
-  - systemctl enable docker
-  - usermod -aG docker yc-user
-  - systemctl restart docker
-  - docker run -d --name redis -p 6379:6379 redis:7 redis-server --requirepass %s
-bootcmd:
-  - 'if ! docker ps -q -f name=redis | grep -q .; then docker start redis 2>/dev/null || true; fi'
-`, strings.TrimSpace(string(sshPublicKey)), password)
+			// Create cloud-config for Redis with proper YAML format
+			cloudConfig := fmt.Sprintf(`#cloud-config
+		ssh_pwauth: no
+		users:
+		  - name: yc-user
+		    sudo: "ALL=(ALL) NOPASSWD:ALL"
+		    shell: /bin/bash
+		    ssh_authorized_keys:
+		      - %s
+		runcmd:
+		  - apt update
+		  - apt install -y docker.io
+		  - systemctl enable docker
+		  - usermod -aG docker yc-user
+		  - systemctl restart docker
+		  - docker run -d --name redis -p 6379:6379 redis:7 redis-server --requirepass %s
+		bootcmd:
+		  - 'if ! docker ps -q -f name=redis | grep -q .; then docker start redis 2>/dev/null || true; fi'
+		`, strings.TrimSpace(string(sshPublicKey)), password)
 
-	// Create compute instance with cloud-config
-	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig)
-	if err != nil {
-		return dto.CacheDeployment{}, fmt.Errorf("failed to create Redis instance: %w", err)
-	}
+			// Create compute instance with cloud-config
+			instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig)
+			if err != nil {
+				return dto.CacheDeployment{}, fmt.Errorf("failed to create Redis instance: %w", err)
+			}
+	*/
 
-	log.Printf("🌐 Deployed Redis for tenant %s on Yandex instance %s (IP: %s)", tenantID, instanceName, instanceIP)
+	// log.Printf("🌐 Deployed Redis for tenant %s on Yandex instance %s (IP: %s)", tenantID, instanceName, instanceIP)
 
 	return dto.CacheDeployment{
-		ConnectionString: fmt.Sprintf("redis://:%s@%s:6379/0", password, instanceIP),
-		Host:            instanceIP,
-		Port:            6379,
-		Password:        password,
-		DB:              0,
-		Type:            "redis",
+		ConnectionString: fmt.Sprintf("redis://:%s@%s:6379/0", "1234", "1.1.1.1"),
+		Host:             "1.1.1.1",
+		Port:             6379,
+		Password:         "1234",
+		DB:               0,
+		Type:             "redis",
 	}, nil
 }
 
@@ -169,16 +259,105 @@ users:
     shell: /bin/bash
     ssh_authorized_keys:
       - %s
-runcmd:
-  - apt update
-  - apt install -y docker.io
-  - systemctl enable docker
-  - usermod -aG docker yc-user
-  - systemctl restart docker
 `, strings.TrimSpace(string(sshPublicKey)))
 
+	dockerFileConfig := fmt.Sprintf(`
+x-room_service-template: &room_service-template
+  image: chempik1234/roomservice:latest
+  restart: unless-stopped
+  # entrypoint: "sleep 1h"
+  depends_on:
+    redis:
+      condition: service_healthy
+    mongodb:
+      condition: service_healthy
+  environment:
+      - ROOM_SERVICE_GRPC_PORT=50050
+      - ROOM_SERVICE_USE_AUTH=true
+      - ROOM_SERVICE_API_KEY=123
+      - ROOM_SERVICE_RETRY_ATTEMPTS=3
+      - ROOM_SERVICE_RETRY_DELAY_MILLISECONDS=500
+      - ROOM_SERVICE_RETRY_BACKOFF=1
+      - ROOM_SERVICE_LOG_LEVEL=info
+      - ROOM_SERVICE_ROOMS_MONGODB_DATABASE=rooms_db
+      - ROOM_SERVICE_ROOMS_MONGODB_ROOMS_COLLECTION=rooms
+      - ROOM_SERVICE_ROOMS_MONGODB_READ_CONCERN=available
+      - ROOM_SERVICE_ROOMS_MONGODB_WRITE_CONCERN=w: 0
+      - ROOM_SERVICE_MONGODB_HOSTS=mongodb:27017
+      - ROOM_SERVICE_MONGODB_MIN_POOL_SIZE=1
+      - ROOM_SERVICE_MONGODB_MAX_POOL_SIZE=10
+      - ROOM_SERVICE_MONGODB_USERNAME=admin
+      - ROOM_SERVICE_MONGODB_PASSWORD=securepassword
+      - ROOM_SERVICE_MONGODB_PASSWORD_SET=true
+      - ROOM_SERVICE_MONGODB_RETRY_WRITES=true
+      - ROOM_SERVICE_MONGODB_RETRY_READS=true
+      - ROOM_SERVICE_REDIS_ADDR=redis:6379
+      - ROOM_SERVICE_REDIS_PASSWORD=redis_pass
+      - ROOM_SERVICE_REDIS_DB=0
+      - ROOM_SERVICE_REDIS_TTL_SECONDS=0
+      - ROOM_SERVICE_REDIS_TIMEOUT_DIAL_MILLISECONDS=5000
+      - ROOM_SERVICE_REDIS_TIMEOUT_READ_MILLISECONDS=1000
+      - ROOM_SERVICE_REDIS_TIMEOUT_WRITE_MILLISECONDS=1000
+      - ROOM_SERVICE_REDIS_RETRIES_MAX_RETRIES=3
+      - ROOM_SERVICE_REDIS_POOL_SIZE=3
+      - ROOM_SERVICE_REDIS_POOL_MIN_IDLE_CONNECTIONS=2
+
+
+services:
+  room_service:
+    <<: *room_service-template
+    ports:
+      - "50051:50050"
+    # scale: 1
+    networks:
+      - backend
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    expose:
+      - "6379"
+    environment:
+      - REDIS_PASSWORD=redis_pass
+    volumes:
+      - redis_data:/data
+    command: ["sh", "-c", "redis-server /usr/local/etc/redis/redis.conf --requirepass $$REDIS_PASSWORD --maxmemory 524288000"]
+    healthcheck:
+      test: [ "CMD-SHELL", "redis-cli", "-a", "$$REDIS_PASSWORD", "ping" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - backend
+
+  mongodb:
+    image: mongo:latest
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=securepassword
+      - MONGO_INITDB_DATABASE=rooms_db
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "db.adminCommand('ping')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - backend
+
+volumes:
+  redis_data:
+  mongo_data:
+
+networks:
+  backend:
+    driver: bridge`)
+
 	// Create compute instance with cloud-config
-	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig)
+	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig, dockerFileConfig)
 	if err != nil {
 		return dto.ApplicationDeployment{}, fmt.Errorf("failed to create application instance: %w", err)
 	}
@@ -287,7 +466,7 @@ func (y *YandexServiceDeployer) GetStatus(ctx context.Context, tenantID string) 
 }
 
 // createComputeInstanceWithConfig creates a new Yandex compute instance with cloud-config
-func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Context, instanceName string, cloudConfig string) (string, error) {
+func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Context, instanceName string, cloudConfig string, dockerFileConfig string) (string, error) {
 	// Initialize yc config with service account key
 	initCmd := exec.CommandContext(ctx, "yc", "config", "set", "service-account-key", y.serviceAccountKey)
 	if output, err := initCmd.CombinedOutput(); err != nil {
@@ -303,6 +482,7 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 	// Create temporary files for metadata (to avoid shell escaping issues)
 	userDataFile := fmt.Sprintf("/tmp/cloud-config-%s.yaml", instanceName)
 	sshKeysFile := fmt.Sprintf("/tmp/ssh-keys-%s.txt", instanceName)
+	dockerContainerFile := fmt.Sprintf("/tmp/docker-%s.txt", instanceName)
 
 	// Write cloud-config to file
 	if err := os.WriteFile(userDataFile, []byte(cloudConfig), 0644); err != nil {
@@ -317,6 +497,12 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 	}
 	defer os.Remove(sshKeysFile) // Clean up
 
+	// Write Docker config to file
+	if err := os.WriteFile(dockerContainerFile, []byte(dockerFileConfig), 0644); err != nil {
+		return "", fmt.Errorf("failed to write dokcer container spec file: %w", err)
+	}
+	defer os.Remove(dockerContainerFile) // Clean up
+
 	// Create instance with metadata-from-file (avoids truncation issues)
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create",
 		"--name", instanceName,
@@ -325,10 +511,11 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		"--platform", y.platform,
 		"--core-fraction", fmt.Sprintf("%d", y.coreFraction),
 		"--memory", fmt.Sprintf("%d", y.memory),
-		"--create-boot-disk", "size=10GB,image-folder-id=standard-images",
+		"--create-boot-disk", "size=20GB,image-folder-id=standard-images,image-id=fd8o107igivalvo4qola",
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
 		"--metadata-from-file", "user-data="+userDataFile,
 		"--metadata-from-file", "ssh-keys="+sshKeysFile,
+		"--metadata-from-file", "docker-compose="+dockerContainerFile,
 		"--format", "json",
 	)
 
@@ -383,7 +570,6 @@ func (y *YandexServiceDeployer) deleteComputeInstance(ctx context.Context, insta
 	return nil
 }
 
-
 // checkInstanceHealth checks if an instance is running and healthy
 func (y *YandexServiceDeployer) checkInstanceHealth(ctx context.Context, instanceName string) (bool, error) {
 	// Initialize yc config with service account key
@@ -406,7 +592,6 @@ func (y *YandexServiceDeployer) checkInstanceHealth(ctx context.Context, instanc
 	// Simple check - if instance exists and status contains "RUNNING"
 	return strings.Contains(string(output), "RUNNING"), nil
 }
-
 
 // parseInstanceIP extracts IP address from yc CLI output
 func (y *YandexServiceDeployer) parseInstanceIP(output string) string {
@@ -447,4 +632,3 @@ func (y *YandexServiceDeployer) parseInstanceIP(output string) string {
 
 	return ""
 }
-

@@ -329,6 +329,7 @@ func processSingleLogEntry(entry logEntry) {
 }
 
 // getClientIP extracts client IP from context
+//
 //nolint:unused // kept for future use
 func (s *Service) getClientIP(ctx context.Context) string {
 	p, ok := peer.FromContext(ctx)
