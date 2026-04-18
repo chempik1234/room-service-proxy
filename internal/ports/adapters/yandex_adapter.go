@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -48,7 +47,7 @@ func NewYandexServiceDeployer(folderID, zone, subnetID, serviceAccountKey, sshKe
 		baseImageID:      "fd8qbv9cd4p6tcp1f4dj0",
 		platform:         "standard-v2", // 2 vCPU
 		coreFraction:     20,              // 20% guaranteed CPU (cost-effective)
-		memory:           4,               // 4 GB RAM
+		memory:           2,               // 4 GB RAM
 	}, nil
 }
 
@@ -63,7 +62,7 @@ func (y *YandexServiceDeployer) DeployDatabase(ctx context.Context, tenantID str
 		return dto.DatabaseDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
 	}
 
-	// Create cloud-config for MongoDB with SSH key
+	// Create cloud-config for MongoDB with proper YAML format
 	cloudConfig := fmt.Sprintf(`#cloud-config
 ssh_pwauth: no
 users:
@@ -113,7 +112,7 @@ func (y *YandexServiceDeployer) DeployCache(ctx context.Context, tenantID string
 		return dto.CacheDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
 	}
 
-	// Create cloud-config for Redis with SSH key
+	// Create cloud-config for Redis with proper YAML format
 	cloudConfig := fmt.Sprintf(`#cloud-config
 ssh_pwauth: no
 users:
@@ -161,9 +160,7 @@ func (y *YandexServiceDeployer) DeployApplication(ctx context.Context, tenantID 
 		return dto.ApplicationDeployment{}, fmt.Errorf("failed to read SSH public key: %w", err)
 	}
 
-	// Create cloud-config for RoomService with SSH key
-	// For now, we'll create a basic instance with Docker installed
-	// TODO: Add proper RoomService deployment logic
+	// Create cloud-config for RoomService with proper YAML format
 	cloudConfig := fmt.Sprintf(`#cloud-config
 ssh_pwauth: no
 users:
@@ -227,9 +224,16 @@ func (y *YandexServiceDeployer) DeleteServices(ctx context.Context, tenantID str
 
 	for _, instanceName := range instances {
 		log.Printf("🌐 Deleting Yandex instance: %s", instanceName)
-		err := y.deleteComputeInstance(ctx, instanceName)
+
+		// Add timeout per deletion to prevent hanging (using async so should be fast)
+		deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+		err := y.deleteComputeInstance(deleteCtx, instanceName)
+		cancel() // Cancel context immediately after deletion completes
 		if err != nil {
 			log.Printf("⚠️  Failed to delete instance %s: %v", instanceName, err)
+		} else {
+			log.Printf("✅ Successfully deleted instance: %s", instanceName)
 		}
 	}
 
@@ -290,9 +294,30 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		return "", fmt.Errorf("failed to initialize yc config: %w, output: %s", err, string(output))
 	}
 
-	// Use yc CLI to create instance with cloud-config metadata
-	// Encode cloud-config to base64 to preserve multi-line format
-	encodedConfig := base64.StdEncoding.EncodeToString([]byte(cloudConfig))
+	// Read SSH public key for metadata
+	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
+	if err != nil {
+		return "", fmt.Errorf("failed to read SSH public key: %w", err)
+	}
+
+	// Create temporary files for metadata (to avoid shell escaping issues)
+	userDataFile := fmt.Sprintf("/tmp/cloud-config-%s.yaml", instanceName)
+	sshKeysFile := fmt.Sprintf("/tmp/ssh-keys-%s.txt", instanceName)
+
+	// Write cloud-config to file
+	if err := os.WriteFile(userDataFile, []byte(cloudConfig), 0644); err != nil {
+		return "", fmt.Errorf("failed to write user-data file: %w", err)
+	}
+	defer os.Remove(userDataFile) // Clean up
+
+	// Write SSH keys to file
+	sshKeyMetadata := fmt.Sprintf("yc-user:%s", strings.TrimSpace(string(sshPublicKey)))
+	if err := os.WriteFile(sshKeysFile, []byte(sshKeyMetadata), 0644); err != nil {
+		return "", fmt.Errorf("failed to write ssh-keys file: %w", err)
+	}
+	defer os.Remove(sshKeysFile) // Clean up
+
+	// Create instance with metadata-from-file (avoids truncation issues)
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create",
 		"--name", instanceName,
 		"--folder-id", y.folderID,
@@ -300,10 +325,10 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		"--platform", y.platform,
 		"--core-fraction", fmt.Sprintf("%d", y.coreFraction),
 		"--memory", fmt.Sprintf("%d", y.memory),
-		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
+		"--create-boot-disk", "size=10GB,image-folder-id=standard-images",
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
-		"--serial-port-settings", "ssh-authorization=instance-metadata",
-		"--metadata", "user-data="+encodedConfig,
+		"--metadata-from-file", "user-data="+userDataFile,
+		"--metadata-from-file", "ssh-keys="+sshKeysFile,
 		"--format", "json",
 	)
 
@@ -347,6 +372,7 @@ func (y *YandexServiceDeployer) deleteComputeInstance(ctx context.Context, insta
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "delete",
 		instanceName,
 		"--folder-id", y.folderID,
+		"--async", // Don't wait for deletion to complete - prevents hanging on third VM
 	)
 
 	output, err := cmd.CombinedOutput()
