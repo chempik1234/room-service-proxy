@@ -18,7 +18,6 @@ import (
 	"github.com/chempik1234/super-danis-library-golang/v2/pkg/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
 

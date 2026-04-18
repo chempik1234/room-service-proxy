@@ -3,7 +3,6 @@ package grpc
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"sync"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
@@ -23,8 +21,11 @@ import (
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
 )
 
+// contextKey is a custom type for context keys to avoid collisions
+type contextKey string
+
 const (
-	defaultRequestTimeout = 30 * time.Second
+	tenantKey contextKey = "tenant"
 )
 
 // Service handles gRPC proxying
@@ -67,8 +68,8 @@ func (s *Service) GetProxyServer() *grpc.Server {
 }
 
 // getDirector returns a director function that routes requests to tenant VMs
-func (s *Service) getDirector() proxy.Director {
-	return func(ctx context.Context, fullMethodName string) (context.Context, *grpc.ClientConn, error) {
+func (s *Service) getDirector() proxy.StreamDirector {
+	return func(ctx context.Context, fullMethodName string) (context.Context, grpc.ClientConnInterface, error) {
 		// Extract tenant info from context
 		tenant, err := s.extractTenantFromContext(ctx)
 		if err != nil {
@@ -124,7 +125,7 @@ func (s *Service) authInterceptor(ctx context.Context, req interface{}, info *gr
 	}
 
 	// Store tenant in context for director to use
-	ctx = context.WithValue(ctx, "tenant", tenant)
+	ctx = context.WithValue(ctx, tenantKey, tenant)
 
 	return handler(ctx, req)
 }
@@ -153,7 +154,7 @@ func (s *Service) loggingInterceptor(ctx context.Context, req interface{}, info 
 
 	// Get tenant from context
 	tenantID := "unknown"
-	if tenant, ok := ctx.Value("tenant").(*ports.Tenant); ok {
+	if tenant, ok := ctx.Value(tenantKey).(*ports.Tenant); ok {
 		tenantID = tenant.ID
 	}
 
@@ -180,7 +181,7 @@ func (s *Service) authStreamInterceptor(srv interface{}, ss grpc.ServerStream, i
 	}
 
 	// Store tenant in context for director to use
-	ctx = context.WithValue(ctx, "tenant", tenant)
+	ctx = context.WithValue(ctx, tenantKey, tenant)
 
 	// Update context in server stream
 	ss = &contextServerStream{
@@ -218,7 +219,7 @@ func (s *Service) loggingStreamInterceptor(srv interface{}, ss grpc.ServerStream
 
 	// Get tenant from context
 	tenantID := "unknown"
-	if tenant, ok := ctx.Value("tenant").(*ports.Tenant); ok {
+	if tenant, ok := ctx.Value(tenantKey).(*ports.Tenant); ok {
 		tenantID = tenant.ID
 	}
 
@@ -345,26 +346,6 @@ func processSingleLogEntry(entry logEntry) {
 	}
 }
 
-// getClientIP extracts client IP from context
-func (s *Service) getClientIP(ctx context.Context) string {
-	p, ok := peer.FromContext(ctx)
-	if !ok {
-		return "unknown"
-	}
-
-	// Handle both TCP and UDP addresses
-	if addr := p.Addr; addr != nil {
-		if tcpAddr, ok := addr.(*net.TCPAddr); ok && len(tcpAddr.IP) > 0 {
-			return tcpAddr.IP.String()
-		}
-		if udpAddr, ok := addr.(*net.UDPAddr); ok && len(udpAddr.IP) > 0 {
-			return udpAddr.IP.String()
-		}
-		return addr.String()
-	}
-
-	return "unknown"
-}
 
 // contextServerStream wraps ServerStream to override context
 type contextServerStream struct {

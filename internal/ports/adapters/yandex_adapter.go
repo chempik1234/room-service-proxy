@@ -404,7 +404,7 @@ users:
       - %s
 `, strings.TrimSpace(string(sshPublicKey)))
 
-	dockerFileConfig := fmt.Sprintf(`
+	dockerFileConfig := `
 x-room_service-template: &room_service-template
   image: chempik1234/roomservice:latest
   restart: unless-stopped
@@ -497,7 +497,8 @@ volumes:
 
 networks:
   backend:
-    driver: bridge`)
+    driver: bridge
+`
 
 	// Create compute instance with cloud-config
 	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig, dockerFileConfig)
@@ -625,20 +626,20 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 	if err := os.WriteFile(userDataFile, []byte(cloudConfig), 0644); err != nil {
 		return "", fmt.Errorf("failed to write user-data file: %w", err)
 	}
-	defer os.Remove(userDataFile) // Clean up
+	defer func() { _ = os.Remove(userDataFile) }() // Clean up
 
 	// Write SSH keys to file
 	sshKeyMetadata := fmt.Sprintf("yc-user:%s", strings.TrimSpace(string(sshPublicKey)))
 	if err := os.WriteFile(sshKeysFile, []byte(sshKeyMetadata), 0644); err != nil {
 		return "", fmt.Errorf("failed to write ssh-keys file: %w", err)
 	}
-	defer os.Remove(sshKeysFile) // Clean up
+	defer func() { _ = os.Remove(sshKeysFile) }() // Clean up
 
 	// Write Docker config to file
 	if err := os.WriteFile(dockerContainerFile, []byte(dockerFileConfig), 0644); err != nil {
 		return "", fmt.Errorf("failed to write dokcer container spec file: %w", err)
 	}
-	defer os.Remove(dockerContainerFile) // Clean up
+	defer func() { _ = os.Remove(dockerContainerFile) }() // Clean up
 
 	// Create instance with metadata-from-file (avoids truncation issues)
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create",
@@ -768,14 +769,4 @@ func (y *YandexServiceDeployer) parseInstanceIP(output string) string {
 	}
 
 	return ""
-}
-
-// generateRandomPassword generates a secure random password
-func generateRandomPassword(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?"
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-	}
-	return string(b)
 }

@@ -274,6 +274,35 @@ func (r *RailwayServiceDeployer) getTenantServices(ctx context.Context, tenantID
 	return serviceIDs, nil
 }
 
+// DeployTenant deploys all services (database, cache, application) for a tenant
+// Railway doesn't support docker-compose, so we deploy services separately
+func (r *RailwayServiceDeployer) DeployTenant(ctx context.Context, tenantID string, config dto.ApplicationConfig) (*dto.TenantDeployment, error) {
+	// Deploy database
+	mongoDeployment, err := r.DeployDatabase(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy database: %w", err)
+	}
+
+	// Deploy cache
+	redisDeployment, err := r.DeployCache(ctx, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy cache: %w", err)
+	}
+
+	// Deploy application
+	appDeployment, err := r.DeployApplication(ctx, tenantID, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deploy application: %w", err)
+	}
+
+	return &dto.TenantDeployment{
+		TenantID:    tenantID,
+		Database:    mongoDeployment,
+		Cache:       redisDeployment,
+		Application: appDeployment,
+	}, nil
+}
+
 // extractHostFromURL extracts hostname from a connection URL
 func extractHostFromURL(url string) string {
 	if idx := strings.Index(url, "://"); idx != -1 {
