@@ -1,11 +1,11 @@
-package adapters
+package utils
 
 import (
 	"time"
 )
 
-// generateRandomPassword generates a secure random password
-func generateRandomPassword(length int) string {
+// GenerateRandomPassword generates a secure random password
+func GenerateRandomPassword(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?"
 
 	b := make([]byte, length)

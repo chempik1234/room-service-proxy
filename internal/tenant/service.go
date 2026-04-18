@@ -8,6 +8,7 @@ import (
 
 	"github.com/chempik1234/room-service-proxy/internal/dto"
 	"github.com/chempik1234/room-service-proxy/internal/ports"
+	"github.com/chempik1234/room-service-proxy/pkg/utils"
 )
 
 // Service handles tenant business logic
@@ -199,7 +200,11 @@ func (s *Service) GetTenantProvisioningStatus(ctx context.Context, tenantID stri
 func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Tenant) (*ProvisionedProject, error) {
 	// Deploy all services in one operation using docker-compose
 	appConfig := dto.ApplicationConfig{
-		Environment: map[string]string{},
+		Environment: map[string]string{
+			"mongoPassword": utils.GenerateRandomPassword(32),
+			"redisPassword": utils.GenerateRandomPassword(32),
+			"apiKey":        tenant.APIKey,
+		},
 	}
 
 	tenantDeployment, err := s.deployer.DeployTenant(ctx, tenant.ID, appConfig)

@@ -194,7 +194,7 @@ func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisU
 			// Service configuration
 			"ROOM_SERVICE_GRPC_PORT":                "50050",
 			"ROOM_SERVICE_USE_AUTH":                 "true",
-			"ROOM_SERVICE_API_KEY":                  generateRandomPassword(32),
+			"ROOM_SERVICE_API_KEY":                  utils.GenerateRandomPassword(32),
 			"ROOM_SERVICE_RETRY_ATTEMPTS":           "3",
 			"ROOM_SERVICE_RETRY_DELAY_MILLISECONDS": "500",
 			"ROOM_SERVICE_RETRY_BACKOFF":            "1",
@@ -209,14 +209,14 @@ func (r *RailwayService) CreateRoomService(projectID, tenantID, mongoURL, redisU
 			"ROOM_SERVICE_MONGODB_MIN_POOL_SIZE":          "1",
 			"ROOM_SERVICE_MONGODB_MAX_POOL_SIZE":          "10",
 			"ROOM_SERVICE_MONGODB_USERNAME":               "admin",
-			"ROOM_SERVICE_MONGODB_PASSWORD":               generateRandomPassword(32),
+			"ROOM_SERVICE_MONGODB_PASSWORD":               utils.GenerateRandomPassword(32),
 			"ROOM_SERVICE_MONGODB_PASSWORD_SET":           "true",
 			"ROOM_SERVICE_MONGODB_RETRY_WRITES":           "true",
 			"ROOM_SERVICE_MONGODB_RETRY_READS":            "true",
 
 			// Redis configuration
 			"ROOM_SERVICE_REDIS_ADDR":                       redisURL,
-			"ROOM_SERVICE_REDIS_PASSWORD":                   generateRandomPassword(32),
+			"ROOM_SERVICE_REDIS_PASSWORD":                   utils.GenerateRandomPassword(32),
 			"ROOM_SERVICE_REDIS_DB":                         "0",
 			"ROOM_SERVICE_REDIS_TTL_SECONDS":                "3600",
 			"ROOM_SERVICE_REDIS_TIMEOUT_DIAL_MILLISECONDS":  "5000",

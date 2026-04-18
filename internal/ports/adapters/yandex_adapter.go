@@ -56,9 +56,9 @@ func (y *YandexServiceDeployer) DeployTenant(ctx context.Context, tenantID strin
 	instanceName := tenantID
 
 	// Generate random passwords for this tenant
-	mongoPassword := generateRandomPassword(32)
-	redisPassword := generateRandomPassword(32)
-	apiKey := generateRandomPassword(32)
+	mongoPassword := config.Environment["mongoPassword"]
+	redisPassword := config.Environment["redisPassword"]
+	apiKey := config.Environment["apiKey"]
 
 	// Read SSH public key
 	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")

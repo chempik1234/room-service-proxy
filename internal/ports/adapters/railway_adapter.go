@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/chempik1234/room-service-proxy/internal/dto"
+	"github.com/chempik1234/room-service-proxy/pkg/utils"
 )
 
 // RailwayServiceDeployer implements ServiceDeployer using Railway's infrastructure
@@ -33,7 +34,7 @@ func NewRailwayServiceDeployer(token, projectID, environmentID string) *RailwayS
 
 // DeployDatabase deploys MongoDB on Railway
 func (r *RailwayServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error) {
-	password := generateRandomPassword(32)
+	password := utils.GenerateRandomPassword(32)
 	mongoURL, err := r.rly.CreateMongoDB(r.rly.ProjectID, tenantID, password)
 	if err != nil {
 		return dto.DatabaseDeployment{}, fmt.Errorf("failed to deploy MongoDB: %w", err)
@@ -55,7 +56,7 @@ func (r *RailwayServiceDeployer) DeployDatabase(ctx context.Context, tenantID st
 
 // DeployCache deploys Redis on Railway
 func (r *RailwayServiceDeployer) DeployCache(ctx context.Context, tenantID string) (dto.CacheDeployment, error) {
-	password := generateRandomPassword(32)
+	password := utils.GenerateRandomPassword(32)
 	redisURL, err := r.rly.CreateRedis(r.rly.ProjectID, tenantID, password)
 	if err != nil {
 		return dto.CacheDeployment{}, fmt.Errorf("failed to deploy Redis: %w", err)
