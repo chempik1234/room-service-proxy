@@ -12,15 +12,6 @@ type ServiceDeployer interface {
 	// DeployTenant deploys all services (database, cache, application) for a tenant in one operation
 	DeployTenant(ctx context.Context, tenantID string, config dto.ApplicationConfig) (*dto.TenantDeployment, error)
 
-	// DeployDatabase deploys a database for the tenant and returns connection string
-	DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error)
-
-	// DeployCache deploys a cache for the tenant and returns connection string
-	DeployCache(ctx context.Context, tenantID string) (dto.CacheDeployment, error)
-
-	// DeployApplication deploys the main application for the tenant
-	DeployApplication(ctx context.Context, tenantID string, config dto.ApplicationConfig) (dto.ApplicationDeployment, error)
-
 	// CheckHealth checks if all services for a tenant are healthy
 	CheckHealth(ctx context.Context, tenantID string) (bool, error)
 
