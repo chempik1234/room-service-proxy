@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
@@ -174,11 +175,7 @@ func (s *Service) validateTenant(ctx context.Context, apiKey string) (*ports.Ten
 }
 
 // forwardUnary forwards a unary request to the tenant instance
-// For shared instance deployment, this routes to a single backend
 func (s *Service) forwardUnary(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, tenant *ports.Tenant, handler grpc.UnaryHandler) (interface{}, error) {
-	// In shared instance mode, the handler directly processes the request
-	// No connection forwarding needed - tenant isolation happens in the handler
-
 	// Add timeout if not set
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -188,20 +185,77 @@ func (s *Service) forwardUnary(ctx context.Context, req interface{}, info *grpc.
 		ctx = newCtx
 	}
 
-	// Process request directly (tenant context already injected)
-	return handler(ctx, req)
+	// Connect to tenant VM
+	target := fmt.Sprintf("%s:%d", tenant.Host, tenant.Port)
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, status.Error(codes.Unavailable, fmt.Sprintf("Failed to connect to tenant VM: %v", err))
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Create generic client and invoke method
+	var response interface{}
+	err = conn.Invoke(ctx, info.FullMethod, req, &response)
+	return response, err
 }
 
 // forwardStream forwards a streaming request to the tenant instance
-// For shared instance deployment, this routes to a single backend
 func (s *Service) forwardStream(ctx context.Context, srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, tenant *ports.Tenant, handler grpc.StreamHandler) error {
-	// In shared instance mode, the handler directly processes the request
-	// No connection forwarding needed - tenant isolation happens in the handler
+	// Connect to tenant VM
+	target := fmt.Sprintf("%s:%d", tenant.Host, tenant.Port)
+	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return status.Error(codes.Unavailable, fmt.Sprintf("Failed to connect to tenant VM: %v", err))
+	}
+	defer func() { _ = conn.Close() }()
 
-	// Add timeout if not set
+	// Create client stream descriptor
+	desc := &grpc.StreamDesc{
+		ServerStreams: info.IsServerStream,
+		ClientStreams: info.IsClientStream,
+	}
 
-	// Process stream directly (tenant context already injected)
-	return handler(srv, ss)
+	// Create client stream
+	clientStream, err := conn.NewStream(ctx, desc, info.FullMethod)
+	if err != nil {
+		return status.Error(codes.Internal, fmt.Sprintf("Failed to create client stream: %v", err))
+	}
+
+	// Forward messages bidirectionally using goroutines
+	errChan := make(chan error, 2)
+
+	// Client to server forwarding
+	go func() {
+		for {
+			var req interface{}
+			if err := ss.RecvMsg(&req); err != nil {
+				errChan <- err
+				return
+			}
+			if err := clientStream.SendMsg(&req); err != nil {
+				errChan <- err
+				return
+			}
+		}
+	}()
+
+	// Server to client forwarding
+	go func() {
+		for {
+			var resp interface{}
+			if err := clientStream.RecvMsg(&resp); err != nil {
+				errChan <- err
+				return
+			}
+			if err := ss.SendMsg(&resp); err != nil {
+				errChan <- err
+				return
+			}
+		}
+	}()
+
+	// Wait for first error
+	return <-errChan
 }
 
 // logRequest logs request information to database
