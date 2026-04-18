@@ -649,7 +649,7 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		"--platform", y.platform,
 		"--core-fraction", fmt.Sprintf("%d", y.coreFraction),
 		"--memory", fmt.Sprintf("%d", y.memory),
-		"--create-boot-disk", "size=20,type=network-ssd,image-id=fd8o107igivalvo4qola",
+		"--create-boot-disk", "size=20,type=network-ssd",
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
 		"--ssh-key", sshKeysFile,
 		"--docker-compose-file", dockerContainerFile,
