@@ -97,12 +97,12 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Proxy as gRPC Proxy
+    participant Proxy as gRPC Proxy (Binary)
     participant Auth as Auth Interceptor
     participant RateLimit as Rate Limiter
     participant Director as Request Director
     participant Pool as Connection Pool
-    participant VM as Tenant VM
+    participant VM as Tenant VM (Docker Host)
     
     Client->>Proxy: gRPC Request + API Key
     
@@ -117,13 +117,13 @@ sequenceDiagram
     Proxy->>Director: Route to tenant VM
     Director->>Pool: Get/Create connection
     Pool-->>Director: gRPC connection
-    Director->>VM: Forward request
+    Director->>VM: Forward request to container
     
-    VM-->>Director: Response
+    VM-->>Director: Response from container
     Director-->>Proxy: Response
     Proxy-->>Client: gRPC Response
     
-    Note over Proxy,VM: All logs include request_id
+    Note over VM,VM: All services run as Docker containers
 ```
 
 ## Authentication & Routing Flow
@@ -197,38 +197,90 @@ graph LR
 
 ## Tenant VM Architecture
 
+Each tenant VM runs **all services as Docker containers** via docker-compose:
+
 ```mermaid
 graph TB
-    subgraph "Tenant VM (Docker Compose)"
-        RoomService[RoomService<br/>:50050<br/>API Key: xyz-123]
-        MongoDB[(MongoDB<br/>:27017<br/>User: admin<br/>Pass: auto-gen)]
-        Redis[(Redis<br/>:6379<br/>Pass: auto-gen)]
+    subgraph "Tenant VM (Docker Host)"
+        Docker[Docker Engine<br/>+ docker-compose]
         
-        RoomService -->|MongoDB Driver| MongoDB
-        RoomService -->|Redis Client| Redis
+        subgraph "Docker Compose Project"
+            RoomService[RoomService Container<br/>chempik1234/roomservice:latest<br/>:50050]
+            MongoDB[MongoDB Container<br/>mongo:latest<br/>:27017]
+            Redis[Redis Container<br/>redis:latest<br/>:6379]
+            
+            RoomService -->|MongoDB Driver| MongoDB
+            RoomService -->|Redis Client| Redis
+            
+            MongoVol[mongo_data<br/>Docker Volume]
+            RedisVol[redis_data<br/>Docker Volume]
+            
+            MongoDB --> MongoVol
+            Redis --> RedisVol
+        end
         
-        MongoDBVolume[mongo_data<br/>volume]
-        RedisVolume[redis_data<br/>volume]
-        
-        MongoDB --> MongoDBVolume
-        Redis --> RedisVolume
+        subgraph "Networking"
+            External[External Access<br/>50051:50050]
+            Network[Docker Network<br/>backend]
+            
+            External --> RoomService
+            RoomService --> Network
+            MongoDB --> Network
+            Redis --> Network
+        end
     end
     
-    subgraph "Networking"
-        External[External Access]
-        PortMap[50051:50050<br/>Port Mapping]
-        
-        External --> PortMap
-        PortMap --> RoomService
-    end
-    
+    style Docker fill:#e1f5ff
     style RoomService fill:#ffe1e1
-    style MongoDB fill:#e1f5ff
+    style MongoDB fill:#e8f5e8
     style Redis fill:#fff9e1
-    style MongoDBVolume fill:#e8f5e8
-    style RedisVolume fill:#e8f5e8
+    style MongoVol fill:#c8e6c9
+    style RedisVol fill:#c8e6c9
     style External fill:#f3e5f5
+    style Network fill:#fce4ec
 ```
+
+## Deployment Adapter Pattern
+
+The proxy uses a **deployment adapter pattern** to support multiple cloud providers through a unified interface:
+
+```mermaid
+classDiagram
+    class ServiceDeployer {
+        <<interface>>
+        +DeployTenant(ctx, tenantID, config) TenantDeployment
+        +DeployDatabase(ctx, tenantID) DatabaseDeployment
+        +DeployCache(ctx, tenantID) CacheDeployment
+        +DeployApplication(ctx, tenantID, config) ApplicationDeployment
+        +DeleteServices(ctx, tenantID) error
+        +CheckHealth(ctx, tenantID) bool
+        +GetStatus(ctx, tenantID) DeploymentStatus
+    }
+    
+    class YandexServiceDeployer {
+        +DeployTenant() TenantDeployment
+        -createComputeInstanceWithConfig()
+        -createDockerComposeConfig()
+        -waitForTenantServices()
+    }
+    
+    class RailwayServiceDeployer {
+        +DeployTenant() TenantDeployment
+        -CreateMongoDB()
+        -CreateRedis()
+        -CreateRoomService()
+    }
+    
+    ServiceDeployer <|-- YandexServiceDeployer
+    ServiceDeployer <|-- RailwayServiceDeployer
+```
+
+### Benefits of Adapter Pattern
+- **Cloud Agnostic**: Easy to add new providers (AWS, GCP, Azure)
+- **Unified API**: Single interface for all deployment operations
+- **Provider Optimization**: Each adapter uses provider-specific best practices
+- **Testing**: Mock adapters for development/testing
+- **Migration**: Easy tenant migration between providers
 
 ## Deployment Providers Comparison
 
@@ -433,14 +485,15 @@ graph TB
 
 | Feature | Description |
 |---------|-------------|
-| **Multi-tenancy** | Each tenant gets isolated VM with own RoomService |
+| **Multi-tenancy** | Each tenant gets isolated VM with docker-compose |
+| **Containerized Services** | RoomService, MongoDB, Redis all run as containers |
 | **gRPC Proxying** | Intelligent routing based on API keys |
 | **Connection Pooling** | Reuse connections for better performance |
 | **Request Tracing** | Unique request ID for end-to-end tracking |
 | **Authentication** | API key validation per tenant |
 | **Rate Limiting** | Per-tenant request limits |
 | **Auto-provisioning** | Automated VM deployment with docker-compose |
-| **Health Monitoring** | Continuous health checks for tenant VMs |
+| **Health Monitoring** | Continuous health checks for all containers |
 | **Cost Optimization** | 67% savings with single VM approach |
 | **Logging** | Comprehensive request logging with tenant context |
 
