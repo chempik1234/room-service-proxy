@@ -7,8 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/chempik1234/super-danis-library-golang/v2/pkg/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mwitkow/grpc-proxy/proxy"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -26,6 +29,7 @@ type contextKey string
 
 const (
 	tenantKey contextKey = "tenant"
+	loggerKey contextKey = "logger"
 )
 
 // Service handles gRPC proxying
@@ -52,11 +56,13 @@ func (s *Service) GetProxyServer() *grpc.Server {
 	// Create a gRPC server with proxy codec
 	server := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(
+			s.requestIDUnaryInterceptor,
 			s.authInterceptor,
 			s.rateLimitInterceptor,
 			s.loggingInterceptor,
 		),
 		grpc.ChainStreamInterceptor(
+			s.requestIDStreamInterceptor,
 			s.authStreamInterceptor,
 			s.rateLimitStreamInterceptor,
 			s.loggingStreamInterceptor,
@@ -67,20 +73,108 @@ func (s *Service) GetProxyServer() *grpc.Server {
 	return server
 }
 
+// requestIDUnaryInterceptor generates request ID and injects logger into context
+func (s *Service) requestIDUnaryInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	// Generate request ID
+	requestID := uuid.New().String()
+
+	// Create base context with logger if not exists
+	baseCtx := context.Background()
+	if _, err := logger.New(baseCtx); err != nil {
+		// Fallback: store request ID directly in context
+		ctx = context.WithValue(ctx, loggerKey, requestID)
+		return handler(ctx, req)
+	}
+
+	// Store request ID in context for later use
+	ctx = context.WithValue(ctx, loggerKey, requestID)
+
+	return handler(ctx, req)
+}
+
+// requestIDStreamInterceptor generates request ID and injects logger into context for streams
+func (s *Service) requestIDStreamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	ctx := ss.Context()
+
+	// Generate request ID
+	requestID := uuid.New().String()
+
+	// Create base context with logger if not exists
+	baseCtx := context.Background()
+	if _, err := logger.New(baseCtx); err != nil {
+		// Fallback: store request ID directly in context
+		ctx = context.WithValue(ctx, loggerKey, requestID)
+		ss = &contextServerStream{
+			ServerStream: ss,
+			ctx:          ctx,
+		}
+		return handler(srv, ss)
+	}
+
+	// Store request ID in context for later use
+	ctx = context.WithValue(ctx, loggerKey, requestID)
+
+	// Update context in server stream
+	ss = &contextServerStream{
+		ServerStream: ss,
+		ctx:          ctx,
+	}
+
+	return handler(srv, ss)
+}
+
+// getRequestIDFromContext extracts request ID from context
+func (s *Service) getRequestIDFromContext(ctx context.Context) string {
+	if requestID, ok := ctx.Value(loggerKey).(string); ok {
+		return requestID
+	}
+	return "unknown"
+}
+
+// createLoggerWithRequestID creates a logger with request ID
+func (s *Service) createLoggerWithRequestID(ctx context.Context) *logger.Logger {
+	// Create base context with logger
+	baseCtx := context.Background()
+	if _, err := logger.New(baseCtx); err != nil {
+		// Fallback: return a basic logger
+		return &logger.Logger{}
+	}
+
+	// Return the base logger (request ID will be added as field in log calls)
+	return logger.GetLoggerFromCtx(baseCtx)
+}
+
 // getDirector returns a director function that routes requests to tenant VMs
 func (s *Service) getDirector() proxy.StreamDirector {
 	return func(ctx context.Context, fullMethodName string) (context.Context, grpc.ClientConnInterface, error) {
+		log := s.createLoggerWithRequestID(ctx)
+		requestID := s.getRequestIDFromContext(ctx)
+
 		// Extract tenant info from context
 		tenant, err := s.extractTenantFromContext(ctx)
 		if err != nil {
+			log.Warn(ctx, "Routing failed: tenant not found in context",
+				zap.String("request_id", requestID),
+				zap.Error(err))
 			return nil, nil, err
 		}
 
 		// Get or create connection to tenant VM
-		conn, err := s.getTenantConnection(tenant)
+		conn, err := s.getTenantConnection(tenant, log)
 		if err != nil {
+			log.Warn(ctx, "Routing failed: connection error",
+				zap.String("request_id", requestID),
+				zap.String("tenant_id", tenant.ID),
+				zap.Error(err))
 			return nil, nil, status.Error(codes.Unavailable, fmt.Sprintf("Failed to connect to tenant VM: %v", err))
 		}
+
+		// Log successful routing with target IP
+		target := fmt.Sprintf("%s:%d", tenant.Host, tenant.Port)
+		log.Debug(ctx, "Routing request",
+			zap.String("request_id", requestID),
+			zap.String("tenant_id", tenant.ID),
+			zap.String("target", target))
 
 		// Return context with connection for proxy library to handle
 		return ctx, conn, nil
@@ -88,14 +182,25 @@ func (s *Service) getDirector() proxy.StreamDirector {
 }
 
 // getTenantConnection gets or creates a connection to the tenant VM
-func (s *Service) getTenantConnection(tenant *ports.Tenant) (*grpc.ClientConn, error) {
+func (s *Service) getTenantConnection(tenant *ports.Tenant, log *logger.Logger) (*grpc.ClientConn, error) {
+	ctx := context.Background()
+	requestID := "unknown" // Connection pooling doesn't have request context
+
 	// Check if connection already exists
 	if conn, ok := s.tenantConns.Load(tenant.ID); ok {
+		log.Debug(ctx, "Using existing connection",
+			zap.String("request_id", requestID),
+			zap.String("tenant_id", tenant.ID))
 		return conn.(*grpc.ClientConn), nil
 	}
 
 	// Create new connection
 	target := fmt.Sprintf("%s:%d", tenant.Host, tenant.Port)
+	log.Info(ctx, "Creating new connection",
+		zap.String("request_id", requestID),
+		zap.String("tenant_id", tenant.ID),
+		zap.String("target", target))
+
 	conn, err := grpc.NewClient(target,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(
@@ -110,19 +215,41 @@ func (s *Service) getTenantConnection(tenant *ports.Tenant) (*grpc.ClientConn, e
 	// Store connection in pool
 	s.tenantConns.Store(tenant.ID, conn)
 
+	log.Info(ctx, "Connection created and pooled",
+		zap.String("request_id", requestID),
+		zap.String("tenant_id", tenant.ID),
+		zap.String("target", target))
 	return conn, nil
 }
 
 // authInterceptor validates authentication
 func (s *Service) authInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+	log := s.createLoggerWithRequestID(ctx)
+	requestID := s.getRequestIDFromContext(ctx)
+
+	// Log incoming request
+	log.Debug(ctx, "Incoming gRPC request",
+		zap.String("request_id", requestID),
+		zap.String("method", info.FullMethod),
+		zap.String("type", "unary"))
+
 	if !s.config.EnableAuth {
 		return handler(ctx, req)
 	}
 
 	tenant, err := s.extractTenantFromContext(ctx)
 	if err != nil {
+		// Log auth error with warning
+		log.Warn(ctx, "Authentication failed",
+			zap.String("request_id", requestID),
+			zap.Error(err))
 		return nil, err
 	}
+
+	// Log successful authentication with tenant info
+	log.Debug(ctx, "Authentication successful",
+		zap.String("request_id", requestID),
+		zap.String("tenant_id", tenant.ID))
 
 	// Store tenant in context for director to use
 	ctx = context.WithValue(ctx, tenantKey, tenant)
@@ -170,6 +297,14 @@ func (s *Service) loggingInterceptor(ctx context.Context, req interface{}, info 
 // authStreamInterceptor validates authentication for streams
 func (s *Service) authStreamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	ctx := ss.Context()
+	log := s.createLoggerWithRequestID(ctx)
+	requestID := s.getRequestIDFromContext(ctx)
+
+	// Log incoming stream request
+	log.Debug(ctx, "Incoming gRPC request",
+		zap.String("request_id", requestID),
+		zap.String("method", info.FullMethod),
+		zap.String("type", "stream"))
 
 	if !s.config.EnableAuth {
 		return handler(srv, ss)
@@ -177,8 +312,17 @@ func (s *Service) authStreamInterceptor(srv interface{}, ss grpc.ServerStream, i
 
 	tenant, err := s.extractTenantFromContext(ctx)
 	if err != nil {
+		// Log auth error with warning
+		log.Warn(ctx, "Authentication failed",
+			zap.String("request_id", requestID),
+			zap.Error(err))
 		return err
 	}
+
+	// Log successful authentication with tenant info
+	log.Debug(ctx, "Authentication successful",
+		zap.String("request_id", requestID),
+		zap.String("tenant_id", tenant.ID))
 
 	// Store tenant in context for director to use
 	ctx = context.WithValue(ctx, tenantKey, tenant)
