@@ -105,26 +105,22 @@ func (s *Service) requestIDStreamInterceptor(srv interface{}, ss grpc.ServerStre
 	return handler(srv, ss)
 }
 
-// getRequestIDFromContext extracts request ID from context
-func (s *Service) getRequestIDFromContext(ctx context.Context) string {
-	if requestID, ok := ctx.Value(loggerKey).(string); ok {
-		return requestID
+// getRequestLoggerFromContext gets logger and request ID from context
+func (s *Service) getRequestLoggerFromContext(ctx context.Context) (*logger.Logger, string) {
+	// Get request ID from context
+	requestID := "unknown"
+	if id, ok := ctx.Value(loggerKey).(string); ok {
+		requestID = id
 	}
-	return "unknown"
-}
 
-// createLoggerWithRequestID creates request-scoped logger with request ID
-func (s *Service) createLoggerWithRequestID(ctx context.Context) *logger.Logger {
-	// Return the application logger
-	// Request ID will be added as field in each log call
-	return s.logger
+	// Return application logger and request ID
+	return s.logger, requestID
 }
 
 // getDirector returns a director function that routes requests to tenant VMs
 func (s *Service) getDirector() proxy.StreamDirector {
 	return func(ctx context.Context, fullMethodName string) (context.Context, grpc.ClientConnInterface, error) {
-		log := s.createLoggerWithRequestID(ctx)
-		requestID := s.getRequestIDFromContext(ctx)
+		log, requestID := s.getRequestLoggerFromContext(ctx)
 
 		// Extract tenant info from context
 		tenant, err := s.extractTenantFromContext(ctx)
@@ -160,12 +156,10 @@ func (s *Service) getDirector() proxy.StreamDirector {
 // getTenantConnection gets or creates a connection to the tenant VM
 func (s *Service) getTenantConnection(tenant *ports.Tenant, log *logger.Logger) (*grpc.ClientConn, error) {
 	ctx := context.Background()
-	requestID := "unknown" // Connection pooling doesn't have request context
 
 	// Check if connection already exists
 	if conn, ok := s.tenantConns.Load(tenant.ID); ok {
 		log.Debug(ctx, "Using existing connection",
-			zap.String("request_id", requestID),
 			zap.String("tenant_id", tenant.ID))
 		return conn.(*grpc.ClientConn), nil
 	}
@@ -173,7 +167,6 @@ func (s *Service) getTenantConnection(tenant *ports.Tenant, log *logger.Logger) 
 	// Create new connection
 	target := fmt.Sprintf("%s:%d", tenant.Host, tenant.Port)
 	log.Info(ctx, "Creating new connection",
-		zap.String("request_id", requestID),
 		zap.String("tenant_id", tenant.ID),
 		zap.String("target", target))
 
@@ -192,7 +185,6 @@ func (s *Service) getTenantConnection(tenant *ports.Tenant, log *logger.Logger) 
 	s.tenantConns.Store(tenant.ID, conn)
 
 	log.Info(ctx, "Connection created and pooled",
-		zap.String("request_id", requestID),
 		zap.String("tenant_id", tenant.ID),
 		zap.String("target", target))
 	return conn, nil
@@ -200,8 +192,7 @@ func (s *Service) getTenantConnection(tenant *ports.Tenant, log *logger.Logger) 
 
 // authInterceptor validates authentication
 func (s *Service) authInterceptor(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-	log := s.createLoggerWithRequestID(ctx)
-	requestID := s.getRequestIDFromContext(ctx)
+	log, requestID := s.getRequestLoggerFromContext(ctx)
 
 	// Log incoming request
 	log.Debug(ctx, "Incoming gRPC request",
@@ -273,8 +264,7 @@ func (s *Service) loggingInterceptor(ctx context.Context, req interface{}, info 
 // authStreamInterceptor validates authentication for streams
 func (s *Service) authStreamInterceptor(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	ctx := ss.Context()
-	log := s.createLoggerWithRequestID(ctx)
-	requestID := s.getRequestIDFromContext(ctx)
+	log, requestID := s.getRequestLoggerFromContext(ctx)
 
 	// Log incoming stream request
 	log.Debug(ctx, "Incoming gRPC request",
