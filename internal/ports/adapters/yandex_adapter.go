@@ -282,8 +282,8 @@ x-room_service-template: &room_service-template
       - ROOM_SERVICE_ROOMS_MONGODB_DATABASE=rooms_db
       - ROOM_SERVICE_ROOMS_MONGODB_ROOMS_COLLECTION=rooms
       - ROOM_SERVICE_ROOMS_MONGODB_READ_CONCERN=available
-      - ROOM_SERVICE_ROOMS_MONGODB_WRITE_CONCERN=w: 0
-      - ROOM_SERVICE_MONGODB_HOSTS=mongodb:27017
+      - "ROOM_SERVICE_ROOMS_MONGODB_WRITE_CONCERN=w: 0"
+      - "ROOM_SERVICE_MONGODB_HOSTS=mongodb:27017"
       - ROOM_SERVICE_MONGODB_MIN_POOL_SIZE=1
       - ROOM_SERVICE_MONGODB_MAX_POOL_SIZE=10
       - ROOM_SERVICE_MONGODB_USERNAME=admin
@@ -291,7 +291,7 @@ x-room_service-template: &room_service-template
       - ROOM_SERVICE_MONGODB_PASSWORD_SET=true
       - ROOM_SERVICE_MONGODB_RETRY_WRITES=true
       - ROOM_SERVICE_MONGODB_RETRY_READS=true
-      - ROOM_SERVICE_REDIS_ADDR=redis:6379
+      - "ROOM_SERVICE_REDIS_ADDR=redis:6379"
       - ROOM_SERVICE_REDIS_PASSWORD=redis_pass
       - ROOM_SERVICE_REDIS_DB=0
       - ROOM_SERVICE_REDIS_TTL_SECONDS=0
@@ -321,7 +321,7 @@ services:
       - REDIS_PASSWORD=redis_pass
     volumes:
       - redis_data:/data
-    command: ["sh", "-c", "redis-server /usr/local/etc/redis/redis.conf --requirepass $$REDIS_PASSWORD --maxmemory 524288000"]
+    command: ["sh", "-c", "redis-server --requirepass $$REDIS_PASSWORD --maxmemory 524288000"]
     healthcheck:
       test: [ "CMD-SHELL", "redis-cli", "-a", "$$REDIS_PASSWORD", "ping" ]
       interval: 30s
@@ -515,7 +515,7 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
 		"--metadata-from-file", "user-data="+userDataFile,
 		"--metadata-from-file", "ssh-keys="+sshKeysFile,
-		"--metadata-from-file", "docker-compose="+dockerContainerFile,
+		"--docker-compose-file", dockerContainerFile,
 		"--format", "json",
 	)
 
