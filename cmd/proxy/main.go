@@ -92,15 +92,13 @@ func startGRPCServer(proxyService *transportgrpc.Service, cfg *config.Config, ct
 		log.Fatalf("Failed to listen: %v", err)
 	}
 
-	server := grpc.NewServer(
-		grpc.UnaryInterceptor(proxyService.UnaryInterceptor),
-		grpc.StreamInterceptor(proxyService.StreamInterceptor),
-	)
+	// Use the new proxy server with proper grpc-proxy library
+	server := proxyService.GetProxyServer()
 
 	// Register reflection for debugging
 	reflection.Register(server)
 
-	logger.GetLoggerFromCtx(ctx).Info(ctx, "gRPC server started", zap.Int("port", cfg.GRPCPort))
+	logger.GetLoggerFromCtx(ctx).Info(ctx, "gRPC proxy server started with mwitkow/grpc-proxy", zap.Int("port", cfg.GRPCPort))
 	if err := server.Serve(listener); err != nil {
 		logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to serve gRPC", zap.Error(err))
 		log.Fatalf("Failed to serve: %v", err)

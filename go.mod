@@ -11,6 +11,8 @@ require (
 	google.golang.org/grpc v1.80.0
 )
 
+require github.com/mwitkow/grpc-proxy v0.0.0-20250813121105-2866842de9a5 // indirect
+
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
