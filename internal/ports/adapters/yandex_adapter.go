@@ -629,7 +629,7 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 	defer func() { _ = os.Remove(userDataFile) }() // Clean up
 
 	// Write SSH keys to file
-	sshKeyMetadata := fmt.Sprintf("yc-user:%s", strings.TrimSpace(string(sshPublicKey)))
+	sshKeyMetadata := strings.TrimSpace(string(sshPublicKey))
 	if err := os.WriteFile(sshKeysFile, []byte(sshKeyMetadata), 0644); err != nil {
 		return "", fmt.Errorf("failed to write ssh-keys file: %w", err)
 	}
