@@ -169,20 +169,20 @@ networks:
 		TenantID: tenantID,
 		Database: dto.DatabaseDeployment{
 			ConnectionString: fmt.Sprintf("mongodb://admin:%s@%s:27017", mongoPassword, instanceIP),
-			Host:            instanceIP,
-			Port:            27017,
-			Username:        "admin",
-			Password:        mongoPassword,
-			Database:        "rooms_db",
-			Type:            "mongodb",
+			Host:             instanceIP,
+			Port:             27017,
+			Username:         "admin",
+			Password:         mongoPassword,
+			Database:         "rooms_db",
+			Type:             "mongodb",
 		},
 		Cache: dto.CacheDeployment{
 			ConnectionString: fmt.Sprintf("redis://:%s@%s:6379/0", redisPassword, instanceIP),
-			Host:            instanceIP,
-			Port:            6379,
-			Password:        redisPassword,
-			DB:              0,
-			Type:            "redis",
+			Host:             instanceIP,
+			Port:             6379,
+			Password:         redisPassword,
+			DB:               0,
+			Type:             "redis",
 		},
 		Application: dto.ApplicationDeployment{
 			Endpoint: fmt.Sprintf("%s:50051", instanceIP),
@@ -642,17 +642,16 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 	defer func() { _ = os.Remove(dockerContainerFile) }() // Clean up
 
 	// Create instance with metadata-from-file (avoids truncation issues)
-	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create",
+	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create-with-container",
 		"--name", instanceName,
 		"--folder-id", y.folderID,
 		"--zone", y.zone,
 		"--platform", y.platform,
 		"--core-fraction", fmt.Sprintf("%d", y.coreFraction),
 		"--memory", fmt.Sprintf("%d", y.memory),
-		"--create-boot-disk", "size=20GB,image-folder-id=standard-images,image-id=fd8o107igivalvo4qola",
+		"--create-boot-disk", "size=20,image-folder-id=standard-images,image-id=fd8o107igivalvo4qola",
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
-		"--metadata-from-file", "user-data="+userDataFile,
-		"--metadata-from-file", "ssh-keys="+sshKeysFile,
+		"--ssh-key", sshKeysFile, // Path to public SSH key file
 		"--docker-compose-file", dockerContainerFile,
 		"--format", "json",
 	)
