@@ -376,8 +376,8 @@ networks:
 func (y *YandexServiceDeployer) CheckHealth(ctx context.Context, tenantID string) (bool, error) {
 	// Check if instances are running and services are accessible
 	instances := []string{
-		fmt.Sprintf("%s-mongo", tenantID),
-		fmt.Sprintf("%s-redis", tenantID),
+		// fmt.Sprintf("%s-mongo", tenantID),
+		// fmt.Sprintf("%s-redis", tenantID),
 		tenantID,
 	}
 
