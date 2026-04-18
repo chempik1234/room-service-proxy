@@ -13,7 +13,7 @@ import (
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
-	"github.com/chempik1234/room-service-proxy/internal/service"
+	transportgrpc "github.com/chempik1234/room-service-proxy/internal/transport/grpc"
 	transportHttp "github.com/chempik1234/room-service-proxy/internal/transport/http"
 	"github.com/chempik1234/super-danis-library-golang/v2/pkg/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,7 +53,7 @@ func main() {
 		zap.Int("burst", cfg.RateLimitBurst))
 
 	// Initialize proxy service
-	proxyService := service.NewService(db, limiter, cfg)
+	proxyService := transportgrpc.NewService(db, limiter, cfg)
 
 	// Setup graceful shutdown
 	setupGracefulShutdown(db, ctx)
@@ -85,7 +85,7 @@ func setupGracefulShutdown(db *pgxpool.Pool, ctx context.Context) {
 }
 
 // startGRPCServer starts the gRPC server
-func startGRPCServer(proxyService *service.Service, cfg *config.Config, ctx context.Context) {
+func startGRPCServer(proxyService *transportgrpc.Service, cfg *config.Config, ctx context.Context) {
 	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.GRPCPort))
 	if err != nil {
 		logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to listen", zap.Error(err))
