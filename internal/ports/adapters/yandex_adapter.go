@@ -51,6 +51,149 @@ func NewYandexServiceDeployer(folderID, zone, subnetID, serviceAccountKey, sshKe
 	}, nil
 }
 
+// DeployTenant deploys all services (MongoDB, Redis, RoomService) using docker-compose on a single Yandex compute instance
+func (y *YandexServiceDeployer) DeployTenant(ctx context.Context, tenantID string, config dto.ApplicationConfig) (*dto.TenantDeployment, error) {
+	instanceName := tenantID
+
+	// Generate random passwords for this tenant
+	mongoPassword := generateRandomPassword(32)
+	redisPassword := generateRandomPassword(32)
+	apiKey := generateRandomPassword(32)
+
+	// Read SSH public key
+	sshPublicKey, err := os.ReadFile(y.sshKeyPath + ".pub")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read SSH public key: %w", err)
+	}
+
+	// Create cloud-config for docker-compose deployment
+	cloudConfig := fmt.Sprintf(`#cloud-config
+ssh_pwauth: no
+users:
+  - name: yc-user
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - %s
+runcmd:
+  - apt update
+  - apt install -y docker.io docker-compose
+  - systemctl enable docker
+  - usermod -aG docker yc-user
+  - systemctl restart docker
+  - mkdir -p /opt/roomservice
+`, strings.TrimSpace(string(sshPublicKey)))
+
+	// Create docker-compose configuration with dynamic passwords
+	dockerComposeConfig := fmt.Sprintf(`
+version: '3.8'
+
+services:
+  roomservice:
+    image: chempik1234/roomservice:latest
+    container_name: roomservice
+    ports:
+      - "50051:50050"
+    environment:
+      - ROOM_SERVICE_GRPC_PORT=50050
+      - ROOM_SERVICE_USE_AUTH=true
+      - ROOM_SERVICE_API_KEY=%s
+      - ROOM_SERVICE_ROOMS_MONGODB_DATABASE=rooms_db
+      - ROOM_SERVICE_ROOMS_MONGODB_ROOMS_COLLECTION=rooms
+      - ROOM_SERVICE_MONGODB_HOSTS=mongodb:27017
+      - ROOM_SERVICE_MONGODB_USERNAME=admin
+      - ROOM_SERVICE_MONGODB_PASSWORD=%s
+      - ROOM_SERVICE_REDIS_ADDR=redis:6379
+      - ROOM_SERVICE_REDIS_PASSWORD=%s
+      - ROOM_SERVICE_REDIS_DB=0
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - backend
+
+  mongodb:
+    image: mongo:6
+    container_name: mongodb
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=%s
+      - MONGO_INITDB_DATABASE=rooms_db
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend
+
+  redis:
+    image: redis:7
+    container_name: redis
+    command: ["redis-server", "--requirepass", "%s"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "%s", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    networks:
+      - backend
+
+volumes:
+  mongo_data:
+  redis_data:
+
+networks:
+  backend:
+    driver: bridge
+`, apiKey, mongoPassword, redisPassword, mongoPassword, redisPassword, redisPassword)
+
+	// Create compute instance with docker-compose
+	instanceIP, err := y.createComputeInstanceWithConfig(ctx, instanceName, cloudConfig, dockerComposeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tenant instance: %w", err)
+	}
+
+	log.Printf("🌐 Deployed tenant %s on Yandex instance %s (IP: %s)", tenantID, instanceName, instanceIP)
+
+	return &dto.TenantDeployment{
+		TenantID: tenantID,
+		Database: dto.DatabaseDeployment{
+			ConnectionString: fmt.Sprintf("mongodb://admin:%s@%s:27017", mongoPassword, instanceIP),
+			Host:            instanceIP,
+			Port:            27017,
+			Username:        "admin",
+			Password:        mongoPassword,
+			Database:        "rooms_db",
+			Type:            "mongodb",
+		},
+		Cache: dto.CacheDeployment{
+			ConnectionString: fmt.Sprintf("redis://:%s@%s:6379/0", redisPassword, instanceIP),
+			Host:            instanceIP,
+			Port:            6379,
+			Password:        redisPassword,
+			DB:              0,
+			Type:            "redis",
+		},
+		Application: dto.ApplicationDeployment{
+			Endpoint: fmt.Sprintf("%s:50051", instanceIP),
+			Host:     instanceIP,
+			Port:     50051,
+			Status:   "healthy",
+			APIKey:   apiKey,
+		},
+	}, nil
+}
+
 // DeployDatabase deploys MongoDB using Docker on Yandex compute instance
 func (y *YandexServiceDeployer) DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error) {
 	/*
@@ -374,48 +517,42 @@ networks:
 
 // CheckHealth checks if all services for a tenant are healthy
 func (y *YandexServiceDeployer) CheckHealth(ctx context.Context, tenantID string) (bool, error) {
-	// Check if instances are running and services are accessible
-	instances := []string{
-		// fmt.Sprintf("%s-mongo", tenantID),
-		// fmt.Sprintf("%s-redis", tenantID),
-		tenantID,
+	// With docker-compose approach, we only check the single tenant VM
+	instanceName := tenantID
+
+	healthy, err := y.checkInstanceHealth(ctx, instanceName)
+	if err != nil {
+		log.Printf("⚠️  Instance %s health check failed: %v", instanceName, err)
+		return false, err
 	}
 
-	allHealthy := true
-	for _, instanceName := range instances {
-		healthy, err := y.checkInstanceHealth(ctx, instanceName)
-		if err != nil || !healthy {
-			allHealthy = false
-			log.Printf("⚠️  Instance %s health check failed: %v", instanceName, err)
-		}
+	if !healthy {
+		log.Printf("⚠️  Instance %s is not healthy", instanceName)
+		return false, nil
 	}
 
-	return allHealthy, nil
+	log.Printf("✅ Instance %s is healthy", instanceName)
+	return true, nil
 }
 
 // DeleteServices removes all compute instances for a tenant
 func (y *YandexServiceDeployer) DeleteServices(ctx context.Context, tenantID string) error {
-	instances := []string{
-		fmt.Sprintf("%s-mongo", tenantID),
-		fmt.Sprintf("%s-redis", tenantID),
-		tenantID,
+	// With docker-compose approach, we only have one VM per tenant
+	instanceName := tenantID
+
+	log.Printf("🌐 Deleting Yandex instance: %s", instanceName)
+
+	// Add timeout to prevent hanging (using async so should be fast)
+	deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+	err := y.deleteComputeInstance(deleteCtx, instanceName)
+	cancel() // Cancel context immediately after deletion completes
+	if err != nil {
+		log.Printf("⚠️  Failed to delete instance %s: %v", instanceName, err)
+		return err
 	}
 
-	for _, instanceName := range instances {
-		log.Printf("🌐 Deleting Yandex instance: %s", instanceName)
-
-		// Add timeout per deletion to prevent hanging (using async so should be fast)
-		deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-
-		err := y.deleteComputeInstance(deleteCtx, instanceName)
-		cancel() // Cancel context immediately after deletion completes
-		if err != nil {
-			log.Printf("⚠️  Failed to delete instance %s: %v", instanceName, err)
-		} else {
-			log.Printf("✅ Successfully deleted instance: %s", instanceName)
-		}
-	}
-
+	log.Printf("✅ Successfully deleted tenant instance: %s", instanceName)
 	return nil
 }
 
@@ -631,4 +768,14 @@ func (y *YandexServiceDeployer) parseInstanceIP(output string) string {
 	}
 
 	return ""
+}
+
+// generateRandomPassword generates a secure random password
+func generateRandomPassword(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+	}
+	return string(b)
 }

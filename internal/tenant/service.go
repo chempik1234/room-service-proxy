@@ -197,47 +197,24 @@ func (s *Service) GetTenantProvisioningStatus(ctx context.Context, tenantID stri
 
 // provisionTenantServices provisions a complete project for a tenant using the configured deployer
 func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Tenant) (*ProvisionedProject, error) {
-	// Deploy database
-	mongoDeployment, err := s.deployer.DeployDatabase(ctx, tenant.ID)
-	if err != nil {
-		// Cleanup in case partial resources were created (like VMs)
-		log.Printf("ERROR: Failed to deploy database for tenant %s: %v", tenant.ID, err)
-		if delErr := s.deployer.DeleteServices(ctx, tenant.ID); delErr != nil {
-			log.Printf("Failed to cleanup after database deployment failure: %v", delErr)
-		}
-		return nil, fmt.Errorf("failed to deploy database: %w", err)
-	}
-	log.Println("- deployed database for tenant", tenant.ID)
-
-	// Deploy cache
-	redisDeployment, err := s.deployer.DeployCache(ctx, tenant.ID)
-	if err != nil {
-		// Idempotent cleanup: delete database
-		log.Printf("ERROR: Failed to deploy cache for tenant %s: %v", tenant.ID, err)
-		if delErr := s.deployer.DeleteServices(ctx, tenant.ID); delErr != nil {
-			log.Printf("Failed to cleanup after cache deployment failure: %v", delErr)
-		}
-		return nil, fmt.Errorf("failed to deploy cache: %w", err)
-	}
-	log.Println("- deployed cache for tenant", tenant.ID)
-
-	// Deploy application
+	// Deploy all services in one operation using docker-compose
 	appConfig := dto.ApplicationConfig{
-		Environment: map[string]string{
-			"MONGO_URL": mongoDeployment.ConnectionString,
-			"REDIS_URL": redisDeployment.ConnectionString,
-		},
+		Environment: map[string]string{},
 	}
-	appDeployment, err := s.deployer.DeployApplication(ctx, tenant.ID, appConfig)
+
+	tenantDeployment, err := s.deployer.DeployTenant(ctx, tenant.ID, appConfig)
 	if err != nil {
-		// Idempotent cleanup: delete cache and database
-		log.Printf("ERROR: Failed to deploy application for tenant %s: %v", tenant.ID, err)
+		log.Printf("ERROR: Failed to deploy tenant %s: %v", tenant.ID, err)
+		// Cleanup in case partial resources were created
 		if delErr := s.deployer.DeleteServices(ctx, tenant.ID); delErr != nil {
-			log.Printf("Failed to cleanup after application deployment failure: %v", delErr)
+			log.Printf("Failed to cleanup after deployment failure: %v", delErr)
 		}
-		return nil, fmt.Errorf("failed to deploy application: %w", err)
+		return nil, fmt.Errorf("failed to deploy tenant: %w", err)
 	}
-	log.Println("- deployed application for tenant", tenant.ID)
+	log.Println("- deployed all services for tenant", tenant.ID)
+
+	// Store generated API key from deployment
+	tenant.APIKey = tenantDeployment.Application.APIKey
 
 	// Wait for services to be ready
 	if err := s.waitForTenantServices(ctx, tenant.ID); err != nil {
@@ -252,12 +229,12 @@ func (s *Service) provisionTenantServices(ctx context.Context, tenant *ports.Ten
 	log.Println("Tenant provisioned!", tenant.ID)
 
 	return &ProvisionedProject{
-		Host:      appDeployment.Host,
-		Port:      appDeployment.Port,
-		MongoURL:  mongoDeployment.ConnectionString,
-		RedisURL:  redisDeployment.ConnectionString,
-		MongoPass: mongoDeployment.Password,
-		RedisPass: redisDeployment.Password,
+		Host:      tenantDeployment.Application.Host,
+		Port:      tenantDeployment.Application.Port,
+		MongoURL:  tenantDeployment.Database.ConnectionString,
+		RedisURL:  tenantDeployment.Cache.ConnectionString,
+		MongoPass: tenantDeployment.Database.Password,
+		RedisPass: tenantDeployment.Cache.Password,
 	}, nil
 }
 

@@ -9,6 +9,9 @@ import (
 // ServiceDeployer defines the port for deploying tenant services
 // Implementations can deploy to Railway, Docker, Kubernetes, etc.
 type ServiceDeployer interface {
+	// DeployTenant deploys all services (database, cache, application) for a tenant in one operation
+	DeployTenant(ctx context.Context, tenantID string, config dto.ApplicationConfig) (*dto.TenantDeployment, error)
+
 	// DeployDatabase deploys a database for the tenant and returns connection string
 	DeployDatabase(ctx context.Context, tenantID string) (dto.DatabaseDeployment, error)
 

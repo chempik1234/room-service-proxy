@@ -27,6 +27,15 @@ type ApplicationDeployment struct {
 	Host     string
 	Port     int
 	Status   string // "deploying", "healthy", "failed"
+	APIKey   string // Generated API key for this tenant
+}
+
+// TenantDeployment contains information about all deployed services for a tenant
+type TenantDeployment struct {
+	TenantID    string
+	Database    DatabaseDeployment
+	Cache       CacheDeployment
+	Application ApplicationDeployment
 }
 
 // ApplicationConfig contains configuration for deploying the application
