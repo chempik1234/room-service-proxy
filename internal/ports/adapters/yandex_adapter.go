@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -289,20 +290,9 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		return "", fmt.Errorf("failed to initialize yc config: %w, output: %s", err, string(output))
 	}
 
-	// Write cloud-config to temporary file to preserve multi-line format
-	tmpFile, err := os.CreateTemp("", "cloud-config-*.yaml")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-
-	if _, err := tmpFile.WriteString(cloudConfig); err != nil {
-		return "", fmt.Errorf("failed to write cloud-config to temp file: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return "", fmt.Errorf("failed to close temp file: %w", err)
-	}
-
-	// Use yc CLI to create instance with cloud-config metadata from file
+	// Use yc CLI to create instance with cloud-config metadata
+	// Encode cloud-config to base64 to preserve multi-line format
+	encodedConfig := base64.StdEncoding.EncodeToString([]byte(cloudConfig))
 	cmd := exec.CommandContext(ctx, "yc", "compute", "instance", "create",
 		"--name", instanceName,
 		"--folder-id", y.folderID,
@@ -313,19 +303,14 @@ func (y *YandexServiceDeployer) createComputeInstanceWithConfig(ctx context.Cont
 		"--create-boot-disk", "size=20GB,image-folder-id=standard-images",
 		"--network-interface", "subnet-id="+y.subnetID+",nat-ip-version=ipv4",
 		"--serial-port-settings", "ssh-authorization=instance-metadata",
-		"--metadata-from-file", "user-data="+tmpFile.Name(),
+		"--metadata", "user-data="+encodedConfig,
 		"--format", "json",
 	)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		// Clean up temp file on error
-		_ = os.Remove(tmpFile.Name())
 		return "", fmt.Errorf("failed to create instance: %w, output: %s", err, string(output))
 	}
-
-	// Clean up temp file (ignore error since instance is already created)
-	_ = os.Remove(tmpFile.Name())
 
 	// Wait for instance to be ready and get IP
 	time.Sleep(30 * time.Second) // Give Yandex time to provision

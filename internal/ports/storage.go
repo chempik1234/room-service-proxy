@@ -15,7 +15,7 @@ type Tenant struct {
 	APIKey            string `json:"api_key"`
 	Host              string `json:"host"`
 	Port              int    `json:"port"`
-	Status            string `json:"status"` // active, suspended, deleted, provisioning, provisioning_failed
+	Status            string `json:"status"` // active, suspended, deleted, provisioning, provisioning_failed, deleting
 	ProvisioningStatus string `json:"provisioning_status"` // For detailed progress: pending, creating_services, configuring_services, ready, failed
 	ProvisioningError  string `json:"provisioning_error,omitempty"` // Error message if provisioning failed
 	Plan              string `json:"plan"`   // free, pro, enterprise

@@ -338,17 +338,36 @@ func (api *AdminAPI) deleteTenant(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
-	// First, delete tenant infrastructure (VMs) to stop costs
+	storage := api.tenantSvc.GetStorage()
+
+	// Set tenant status to "deleting" before starting cleanup
+	log.Printf("🔄 Marking tenant %s as deleting", id)
+	tenant, err := storage.GetTenant(ctx, id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Tenant not found"})
+		return
+	}
+	tenant.Status = "deleting"
+	if err := storage.UpdateTenant(ctx, tenant); err != nil {
+		log.Printf("⚠️  Failed to mark tenant %s as deleting: %v", id, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to mark tenant as deleting: %v", err)})
+		return
+	}
+
+	// Delete tenant infrastructure (VMs) to stop costs
 	deployer := api.tenantSvc.GetDeployer()
 	log.Printf("🧹 Cleaning up infrastructure for tenant %s", id)
 	if err := deployer.DeleteServices(ctx, id); err != nil {
 		log.Printf("⚠️  Failed to cleanup infrastructure for tenant %s: %v", id, err)
+		// Revert status back to previous state on failure
+		tenant.Status = "active"
+		_ = storage.UpdateTenant(ctx, tenant)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to cleanup tenant infrastructure: %v", err)})
 		return
 	}
 
-	// Then, delete database row
-	storage := api.tenantSvc.GetStorage()
+	// Finally, delete database row after successful infrastructure cleanup
+	log.Printf("🗑️  Deleting database record for tenant %s", id)
 	if err := storage.DeleteTenant(ctx, id); err != nil {
 		log.Printf("⚠️  Failed to delete database row for tenant %s: %v", id, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to delete tenant record: %v", err)})
@@ -461,6 +480,7 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 	totalTenants := len(tenants)
 	activeTenants := 0
 	suspendedTenants := 0
+	deletingTenants := 0
 
 	for _, tenant := range tenants {
 		switch tenant.Status {
@@ -468,6 +488,8 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 			activeTenants++
 		case "suspended":
 			suspendedTenants++
+		case "deleting":
+			deletingTenants++
 		}
 	}
 
@@ -498,6 +520,7 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 		"totalTenants":     totalTenants,
 		"activeTenants":    activeTenants,
 		"suspendedTenants": suspendedTenants,
+		"deletingTenants":  deletingTenants,
 		"totalRequests":    totalRequests,
 	})
 }
