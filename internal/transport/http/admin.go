@@ -14,7 +14,7 @@ import (
 
 	"github.com/chempik1234/room-service-proxy/internal/ports"
 	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
-	"github.com/chempik1234/room-service-proxy/internal/tenant"
+	"github.com/chempik1234/room-service-proxy/internal/service/tenant"
 )
 
 // AdminAPI handles HTTP API requests for tenant management

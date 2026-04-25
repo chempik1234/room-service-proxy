@@ -13,11 +13,11 @@ import (
 	"time"
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
-	"github.com/chempik1234/room-service-proxy/internal/healthcheck"
 	"github.com/chempik1234/room-service-proxy/internal/ports"
 	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
 	"github.com/chempik1234/room-service-proxy/internal/ports/adapters/postgres"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
+	"github.com/chempik1234/room-service-proxy/internal/service/healthcheck"
 	transportgrpc "github.com/chempik1234/room-service-proxy/internal/transport/grpc"
 	transportHttp "github.com/chempik1234/room-service-proxy/internal/transport/http"
 	"github.com/chempik1234/super-danis-library-golang/v2/pkg/logger"

@@ -156,7 +156,7 @@ func (s *Service) run() {
 	}
 }
 
-// checkAllTenants checks health of all active tenants
+// checkAllTenants checks health of all tenants
 func (s *Service) checkAllTenants() {
 	ctx, cancel := context.WithTimeout(s.ctx, 5*time.Minute)
 	defer cancel()
@@ -171,20 +171,22 @@ func (s *Service) checkAllTenants() {
 	}
 
 	// Filter tenants that should be health checked
-	// Only check active tenants that are fully provisioned
+	// Check ALL tenants that have host and port configured
 	var tenantsToCheck []*ports.Tenant
 	for _, tenant := range tenants {
-		if tenant.Status == "active" && tenant.ProvisioningStatus == "ready" && tenant.Host != "" && tenant.Port > 0 {
+		if tenant.Host != "" && tenant.Port > 0 {
 			tenantsToCheck = append(tenantsToCheck, tenant)
 		}
 	}
 
 	if len(tenantsToCheck) == 0 {
-		s.logger.Debug(ctx, "No tenants to health check", zap.String("service", "healthcheck"))
+		s.logger.Info(ctx, "No tenants to health check - no tenants with host/port configuration found",
+			zap.Int("total_tenants", len(tenants)),
+			zap.String("service", "healthcheck"))
 		return
 	}
 
-	s.logger.Debug(ctx, "Checking health of active tenants",
+	s.logger.Info(ctx, "Checking health of all configured tenants",
 		zap.Int("total_tenants", len(tenants)),
 		zap.Int("checking_tenants", len(tenantsToCheck)),
 		zap.String("service", "healthcheck"))
@@ -248,6 +250,7 @@ func (s *Service) checkTenantHealth(ctx context.Context, tenant *ports.Tenant) {
 		s.logger.Warn(ctx, "Health check error for tenant",
 			zap.String("tenant_id", tenant.ID),
 			zap.String("tenant_name", tenant.Name),
+			zap.String("current_status", tenant.Status),
 			zap.Error(err),
 			zap.String("service", "healthcheck"))
 
@@ -270,6 +273,7 @@ func (s *Service) checkTenantHealth(ctx context.Context, tenant *ports.Tenant) {
 		s.logger.Warn(ctx, "Tenant health check failed",
 			zap.String("tenant_id", tenant.ID),
 			zap.String("tenant_name", tenant.Name),
+			zap.String("current_status", tenant.Status),
 			zap.String("service", "healthcheck"))
 
 		// Increment failure counter
@@ -288,9 +292,10 @@ func (s *Service) checkTenantHealth(ctx context.Context, tenant *ports.Tenant) {
 	}
 
 	// Tenant is healthy
-	s.logger.Debug(ctx, "Tenant health check passed",
+	s.logger.Info(ctx, "Tenant health check passed",
 		zap.String("tenant_id", tenant.ID),
 		zap.String("tenant_name", tenant.Name),
+		zap.String("current_status", tenant.Status),
 		zap.String("service", "healthcheck"))
 
 	// Reset failure counter and update status if it was unhealthy
@@ -299,7 +304,7 @@ func (s *Service) checkTenantHealth(ctx context.Context, tenant *ports.Tenant) {
 	status.lastCheckTime = now
 	healthStatusMap.Unlock()
 
-	// If tenant was marked unhealthy, mark them back as healthy
+	// If tenant was marked unhealthy, mark them back to healthy
 	if tenant.Status == "unhealthy" {
 		s.markTenantHealthy(ctx, tenant)
 	}
@@ -311,7 +316,7 @@ func (s *Service) markTenantUnhealthy(ctx context.Context, tenant *ports.Tenant,
 		return // Already marked
 	}
 
-	log.Printf("Marking tenant %s (%s) as unhealthy: %v", tenant.ID, tenant.Name, reason)
+	log.Printf("⚠️  Marking tenant %s (%s) as unhealthy: %v", tenant.ID, tenant.Name, reason)
 
 	tenant.Status = "unhealthy"
 	if err := s.storage.UpdateTenant(ctx, tenant); err != nil {
@@ -331,7 +336,7 @@ func (s *Service) markTenantUnhealthy(ctx context.Context, tenant *ports.Tenant,
 
 // markTenantHealthy marks a tenant as healthy/active
 func (s *Service) markTenantHealthy(ctx context.Context, tenant *ports.Tenant) {
-	log.Printf("Marking tenant %s (%s) as healthy again", tenant.ID, tenant.Name)
+	log.Printf("✅ Marking tenant %s (%s) as healthy again", tenant.ID, tenant.Name)
 
 	tenant.Status = "active"
 	if err := s.storage.UpdateTenant(ctx, tenant); err != nil {
