@@ -64,7 +64,7 @@ func (s *PostgresTenantStorage) CreateTenant(ctx context.Context, tenant *ports.
 
 	query := `
 		INSERT INTO tenants (id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 	`
 
@@ -100,13 +100,13 @@ func (s *PostgresTenantStorage) GetTenant(ctx context.Context, tenantID string) 
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get tenant: %w", err)
+		return nil, fmt.Errorf("tenant not found: %w", err)
 	}
 
 	return &t, nil
 }
 
-// GetTenantByAPIKey retrieves a tenant by API key
+// GetTenantByAPIKey retrieves a tenant by their API key
 func (s *PostgresTenantStorage) GetTenantByAPIKey(ctx context.Context, apiKey string) (*ports.Tenant, error) {
 	var t ports.Tenant
 	query := `
@@ -121,13 +121,13 @@ func (s *PostgresTenantStorage) GetTenantByAPIKey(ctx context.Context, apiKey st
 	)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get tenant by API key: %w", err)
+		return nil, fmt.Errorf("tenant not found: %w", err)
 	}
 
 	return &t, nil
 }
 
-// ListTenants retrieves all tenants
+// ListTenants retrieves all tenants from storage
 func (s *PostgresTenantStorage) ListTenants(ctx context.Context) ([]*ports.Tenant, error) {
 	query := `
 		SELECT id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
@@ -157,7 +157,7 @@ func (s *PostgresTenantStorage) ListTenants(ctx context.Context) ([]*ports.Tenan
 	return tenants, nil
 }
 
-// ListTenantsByUserID retrieves tenants for a specific user
+// ListTenantsByUserID retrieves all tenants for a specific user
 func (s *PostgresTenantStorage) ListTenantsByUserID(ctx context.Context, userID string) ([]*ports.Tenant, error) {
 	query := `
 		SELECT id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
@@ -187,25 +187,26 @@ func (s *PostgresTenantStorage) ListTenantsByUserID(ctx context.Context, userID 
 	return tenants, nil
 }
 
-// UpdateTenant updates a tenant
-func (s *PostgresTenantStorage) UpdateTenant(ctx context.Context, t *ports.Tenant) error {
-	t.UpdatedAt = time.Now()
+// UpdateTenant updates an existing tenant record
+func (s *PostgresTenantStorage) UpdateTenant(ctx context.Context, tenant *ports.Tenant) error {
+	tenant.UpdatedAt = time.Now()
 
 	query := `
 		UPDATE tenants
-		SET name = $2, email = $3, host = $4, port = $5, status = $6,
-		    plan = $7, max_rooms = $8, max_rps = $9, updated_at = $10
+		SET user_id = $2, name = $3, email = $4, api_key = $5, host = $6, port = $7,
+		    status = $8, plan = $9, max_rooms = $10, max_rps = $11, updated_at = $12
 		WHERE id = $1
 		RETURNING id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 	`
 
 	err := s.db.QueryRow(ctx, query,
-		t.ID, t.Name, t.Email, t.Host, t.Port,
-		t.Status, t.Plan, t.MaxRooms, t.MaxRPS, t.UpdatedAt,
+		tenant.ID, tenant.UserID, tenant.Name, tenant.Email, tenant.APIKey,
+		tenant.Host, tenant.Port, tenant.Status, tenant.Plan,
+		tenant.MaxRooms, tenant.MaxRPS, tenant.UpdatedAt,
 	).Scan(
-		&t.ID, &t.UserID, &t.Name, &t.Email, &t.APIKey,
-		&t.Host, &t.Port, &t.Status, &t.Plan,
-		&t.MaxRooms, &t.MaxRPS, &t.CreatedAt, &t.UpdatedAt,
+		&tenant.ID, &tenant.UserID, &tenant.Name, &tenant.Email, &tenant.APIKey,
+		&tenant.Host, &tenant.Port, &tenant.Status, &tenant.Plan,
+		&tenant.MaxRooms, &tenant.MaxRPS, &tenant.CreatedAt, &tenant.UpdatedAt,
 	)
 
 	if err != nil {
@@ -215,79 +216,67 @@ func (s *PostgresTenantStorage) UpdateTenant(ctx context.Context, t *ports.Tenan
 	return nil
 }
 
-// DeleteTenant soft deletes a tenant (sets status to deleted)
-func (s *PostgresTenantStorage) DeleteTenant(ctx context.Context, id string) error {
-	nowStr := time.Now().Format(time.RFC3339)
-	query := `UPDATE tenants SET status = 'deleted', updated_at = $1 WHERE id = $2`
-	_, err := s.db.Exec(ctx, query, nowStr, id)
+// DeleteTenant soft deletes a tenant by setting status to "deleted"
+func (s *PostgresTenantStorage) DeleteTenant(ctx context.Context, tenantID string) error {
+	query := `UPDATE tenants SET status = 'deleted' WHERE id = $1`
+
+	result, err := s.db.Exec(ctx, query, tenantID)
 	if err != nil {
 		return fmt.Errorf("failed to delete tenant: %w", err)
 	}
+
+	rowsAffected := result.RowsAffected()
+	if rowsAffected == 0 {
+		return fmt.Errorf("tenant not found")
+	}
+
 	return nil
 }
 
 // RegenerateAPIKey generates a new API key for a tenant
-func (s *PostgresTenantStorage) RegenerateAPIKey(ctx context.Context, id string) (string, error) {
-	newAPIKey := generateAPIKey(id)
-	nowStr := time.Now().Format(time.RFC3339)
-	query := `UPDATE tenants SET api_key = $2, updated_at = $3 WHERE id = $1 RETURNING api_key`
-
-	err := s.db.QueryRow(ctx, query, id, newAPIKey, nowStr).Scan(&newAPIKey)
+func (s *PostgresTenantStorage) RegenerateAPIKey(ctx context.Context, tenantID string) (string, error) {
+	// Verify tenant exists
+	_, err := s.GetTenant(ctx, tenantID)
 	if err != nil {
-		return "", fmt.Errorf("failed to regenerate API key: %w", err)
+		return "", fmt.Errorf("tenant not found: %w", err)
+	}
+
+	// Generate new API key
+	newAPIKey := generateAPIKey(tenantID)
+
+	// Update tenant with new API key
+	query := `UPDATE tenants SET api_key = $2, updated_at = NOW() WHERE id = $1`
+	_, err = s.db.Exec(ctx, query, tenantID, newAPIKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to update API key: %w", err)
 	}
 
 	return newAPIKey, nil
 }
 
-// Close closes the database connection pool
-func (s *PostgresTenantStorage) Close() {
-	if s.db != nil {
-		s.db.Close()
-	}
-}
-
 // Helper functions
+
+// generateTenantID generates a unique tenant ID from the tenant name
 func generateTenantID(name string) string {
-	// Sanitize name to remove URL-unsafe characters
-	fmt.Printf("🔧 [DEBUG] Original tenant name: %q\n", name)
-
-	sanitizedName := strings.ToLower(strings.TrimSpace(name))
-
-	// Replace ALL URL-unsafe characters
-	sanitizedName = strings.ReplaceAll(sanitizedName, "/", "-")
-	sanitizedName = strings.ReplaceAll(sanitizedName, " ", "-")
-	sanitizedName = strings.ReplaceAll(sanitizedName, "_", "-")
-	sanitizedName = strings.ReplaceAll(sanitizedName, "\\", "-") // Remove backslashes
-	sanitizedName = strings.ReplaceAll(sanitizedName, ":", "-")  // Remove colons
-	sanitizedName = strings.ReplaceAll(sanitizedName, "@", "-")  // Remove at signs
-	sanitizedName = strings.ReplaceAll(sanitizedName, ".", "-")  // Remove dots
-	sanitizedName = strings.ReplaceAll(sanitizedName, "*", "-")  // Remove asterisks
-
-	fmt.Printf("🔧 [DEBUG] Sanitized name: %s\n", sanitizedName)
-
-	// Double-check no unsafe characters remain
-	unsafe := []string{"/", " ", "_", "\\", ":", "@", "."}
-	for _, char := range unsafe {
-		if strings.Contains(sanitizedName, char) {
-			fmt.Printf("❌ [ERROR] Sanitization failed! Still contains: %s\n", char)
+	// Convert name to lowercase and replace spaces with hyphens
+	cleanName := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+	// Remove any non-alphanumeric characters except hyphens
+	cleanName = strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			return r
 		}
-	}
+		return -1
+	}, cleanName)
 
-	// Generate a unique tenant ID
-	tenantID := fmt.Sprintf("tenant-%s-%s", sanitizedName, uuid.New().String()[:8])
+	// Generate a UUID for uniqueness
+	uniqueID := strings.ReplaceAll(uuid.New().String(), "-", "")[:12]
 
-	// Final verification
-	if strings.Contains(tenantID, "/") {
-		fmt.Printf("❌ [CRITICAL] Generated ID still contains slash! ID: %s\n", tenantID)
-	}
-
-	fmt.Printf("🔧 [DEBUG] Generated tenant ID: name=%q → id=%s\n", name, tenantID)
-
-	return tenantID
+	return fmt.Sprintf("tenant_%s_%s", cleanName, uniqueID)
 }
 
-func generateAPIKey(tenantID string) string {
-	// Generate a unique API key
-	return fmt.Sprintf("rs_live_%s_%s", tenantID, uuid.New().String())
+// generateAPIKey generates a unique API key for a tenant
+func generateAPIKey(_ string) string {
+	// Generate a UUID and format it as an API key
+	apiKey := strings.ReplaceAll(uuid.New().String(), "-", "")
+	return fmt.Sprintf("rs_live_%s", apiKey)
 }

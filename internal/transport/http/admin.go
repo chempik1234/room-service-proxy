@@ -501,6 +501,7 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 	activeTenants := 0
 	suspendedTenants := 0
 	deletingTenants := 0
+	unhealthyTenants := 0
 
 	for _, tenant := range tenants {
 		switch tenant.Status {
@@ -510,6 +511,8 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 			suspendedTenants++
 		case "deleting":
 			deletingTenants++
+		case "unhealthy":
+			unhealthyTenants++
 		}
 	}
 
@@ -538,6 +541,7 @@ func (api *AdminAPI) getStats(c *gin.Context) {
 		"activeTenants":    activeTenants,
 		"suspendedTenants": suspendedTenants,
 		"deletingTenants":  deletingTenants,
+		"unhealthyTenants": unhealthyTenants,
 		"totalRequests":    totalRequests,
 	})
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -12,7 +13,9 @@ import (
 	"time"
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
+	"github.com/chempik1234/room-service-proxy/internal/healthcheck"
 	"github.com/chempik1234/room-service-proxy/internal/ports"
+	"github.com/chempik1234/room-service-proxy/internal/ports/adapters"
 	"github.com/chempik1234/room-service-proxy/internal/ports/adapters/postgres"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
 	transportgrpc "github.com/chempik1234/room-service-proxy/internal/transport/grpc"
@@ -86,19 +89,35 @@ func main() {
 	appLogger := logger.GetLoggerFromCtx(ctx)
 	proxyService := transportgrpc.NewService(storageRepo, limiter, cfg, appLogger)
 
-	// Setup graceful shutdown
-	setupGracefulShutdown(ctx, db)
+	// Create deployment provider and health check service
+	deployer, err := createDeployer(cfg)
+	if err != nil {
+		logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to create deployer", zap.Error(err))
+		log.Fatalf("Failed to create deployer: %v", err)
+	}
+
+	healthCheckService, err := healthcheck.NewService(storageRepo, deployer, appLogger, healthcheck.DefaultConfig())
+	if err != nil {
+		logger.GetLoggerFromCtx(ctx).Error(ctx, "Failed to create health check service", zap.Error(err))
+		log.Fatalf("Failed to create health check service: %v", err)
+	}
+
+	// Setup graceful shutdown with health check service
+	setupGracefulShutdown(ctx, db, healthCheckService)
+
+	// Start health check service
+	healthCheckService.Start()
 
 	// Start gRPC server
 	go startGRPCServer(ctx, proxyService, cfg)
 
 	// Start admin API server with all repositories
 	// All repositories are passed as parameters following dependency injection pattern
-	startAdminAPIServer(ctx, cfg, db, storageRepo, userStorage, authTokenStorage, requestLogStorage)
+	startAdminAPIServer(ctx, cfg, db, storageRepo, userStorage, authTokenStorage, requestLogStorage, deployer)
 }
 
 // setupGracefulShutdown handles graceful shutdown of all services
-func setupGracefulShutdown(ctx context.Context, db *pgxpool.Pool) {
+func setupGracefulShutdown(ctx context.Context, db *pgxpool.Pool, healthCheckService *healthcheck.Service) {
 	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
@@ -106,6 +125,10 @@ func setupGracefulShutdown(ctx context.Context, db *pgxpool.Pool) {
 	go func() {
 		sig := <-sigChan
 		logger.GetLoggerFromCtx(ctx).Info(ctx, "Received shutdown signal", zap.String("signal", sig.String()))
+
+		// Stop health check service
+		logger.GetLoggerFromCtx(ctx).Info(ctx, "Stopping health check service...")
+		healthCheckService.Stop()
 
 		// Close database connection
 		logger.GetLoggerFromCtx(ctx).Info(ctx, "Closing database connection...")
@@ -137,6 +160,33 @@ func startGRPCServer(ctx context.Context, proxyService *transportgrpc.Service, c
 	}
 }
 
+// createDeployer creates the appropriate deployer based on configuration
+func createDeployer(cfg *config.Config) (ports.ServiceDeployer, error) {
+	switch cfg.DeploymentProvider {
+	case "railway":
+		railwayToken := cfg.RailwayToken
+		railwayProjectID := cfg.RailwayProjectID
+		railwayEnvironmentID := cfg.RailwayEnvironmentID
+		deployer := adapters.NewRailwayServiceDeployer(railwayToken, railwayProjectID, railwayEnvironmentID)
+		return deployer, nil
+	case "yandex":
+		yandexFolderID := cfg.YandexFolderID
+		yandexZone := cfg.YandexZone
+		yandexSubnetID := cfg.YandexSubnetID
+		yandexServiceAccountKey := cfg.YandexServiceAccountKey
+		yandexSSHKeyPath := cfg.YandexSSHKeyPath
+		deployer, err := adapters.NewYandexServiceDeployer(yandexFolderID, yandexZone, yandexSubnetID, yandexServiceAccountKey, yandexSSHKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create yandex deployer: %w", err)
+		}
+		return deployer, nil
+	case "docker":
+		return nil, fmt.Errorf("docker adapter is currently disabled; please use Railway deployment instead")
+	default:
+		return nil, fmt.Errorf("unknown deployment provider: %s", cfg.DeploymentProvider)
+	}
+}
+
 // startAdminAPIServer starts the HTTP admin API server
 //
 // This function initializes the admin API with all required storage repositories.
@@ -150,7 +200,8 @@ func startGRPCServer(ctx context.Context, proxyService *transportgrpc.Service, c
 //   - userStorage: User storage for authentication and user management
 //   - authTokenStorage: Session token storage for login/logout
 //   - requestLogStorage: Analytics storage for request tracking
-func startAdminAPIServer(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, storageRepo ports.TenantStorage, userStorage ports.UserStorage, authTokenStorage ports.AuthTokenStorage, requestLogStorage ports.RequestLogStorage) {
+//   - deployer: Service deployer for tenant management
+func startAdminAPIServer(ctx context.Context, cfg *config.Config, db *pgxpool.Pool, storageRepo ports.TenantStorage, userStorage ports.UserStorage, authTokenStorage ports.AuthTokenStorage, requestLogStorage ports.RequestLogStorage, deployer ports.ServiceDeployer) {
 	// Prepare deployment configuration
 	deploymentConfig := make(map[string]string)
 

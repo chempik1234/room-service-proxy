@@ -432,8 +432,13 @@ func (s *Service) validateTenant(ctx context.Context, apiKey string) (*ports.Ten
 		return nil, status.Error(codes.Unauthenticated, "Invalid API key")
 	}
 
+	// Check tenant status - only allow active tenants
 	if tenant.Status != "active" {
-		return nil, status.Error(codes.PermissionDenied, fmt.Sprintf("Tenant is %s", tenant.Status))
+		errorMsg := fmt.Sprintf("Tenant is %s", tenant.Status)
+		if tenant.Status == "unhealthy" {
+			errorMsg = "Tenant services are currently unavailable. Please contact support."
+		}
+		return nil, status.Error(codes.PermissionDenied, errorMsg)
 	}
 
 	return tenant, nil

@@ -24,9 +24,9 @@ type AuthToken struct {
 // RequestLog represents a logged request
 type RequestLog struct {
 	TenantID    string    `json:"tenant_id" db:"tenant_id"`
-	Method       string    `json:"method" db:"method"`
-	RequestType  string    `json:"request_type" db:"request_type"`
-	StatusCode   int       `json:"status_code" db:"status_code"`
-	LatencyMs    int       `json:"latency_ms" db:"latency_ms"`
-	Timestamp    time.Time `json:"timestamp" db:"created_at"`
+	Method      string    `json:"method" db:"method"`
+	RequestType string    `json:"request_type" db:"request_type"`
+	StatusCode  int       `json:"status_code" db:"status_code"`
+	LatencyMs   int       `json:"latency_ms" db:"latency_ms"`
+	Timestamp   time.Time `json:"timestamp" db:"created_at"`
 }

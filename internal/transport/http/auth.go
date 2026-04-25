@@ -227,10 +227,10 @@ func (auth *AuthAPI) GetUserFromToken(token string) (*User, error) {
 	}
 
 	return &User{
-		ID:        user.ID,
-		Email:     user.Email,
-		Name:      user.Name,
-		Role:      user.Role,
+		ID:    user.ID,
+		Email: user.Email,
+		Name:  user.Name,
+		Role:  user.Role,
 	}, nil
 }
 
