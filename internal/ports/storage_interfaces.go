@@ -14,7 +14,7 @@ var ErrNotFound = errors.New("not found")
 // Tenant represents a tenant in the system
 type Tenant struct {
 	ID                 string    `json:"id"`
-	UserID             string    `json:"user_id"` // Owner of the tenant
+	UserID             string    `json:"user_id"` // Owner of the tenant (required)
 	Name               string    `json:"name"`
 	Email              string    `json:"email"`
 	APIKey             string    `json:"api_key"`

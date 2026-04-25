@@ -211,6 +211,14 @@ func (api *AdminAPI) createTenant(c *gin.Context) {
 		// Regular user creating tenant - set their user_id
 		user := c.MustGet("user").(*User)
 		req.UserID = user.ID
+	} else {
+		// Admin creating tenant - look up user by email
+		user, err := api.userStorage.GetUserByEmail(c.Request.Context(), req.Email)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("User with email '%s' not found. Please create the user first.", req.Email)})
+			return
+		}
+		req.UserID = user.ID
 	}
 
 	// Create tenant (async provisioning)

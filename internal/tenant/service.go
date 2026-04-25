@@ -295,7 +295,7 @@ type ProvisionedProject struct {
 
 // CreateTenantRequest represents a request to create a tenant
 type CreateTenantRequest struct {
-	UserID string `json:"user_id"` // Optional user ID (for user-created tenants)
+	UserID string `json:"user_id"` // User ID (required, looked up from email if needed)
 	Name   string `json:"name"`
 	Email  string `json:"email"`
 	Plan   string `json:"plan"` // free, pro, enterprise

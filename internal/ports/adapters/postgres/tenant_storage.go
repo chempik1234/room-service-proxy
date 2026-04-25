@@ -64,7 +64,7 @@ func (s *PostgresTenantStorage) CreateTenant(ctx context.Context, tenant *ports.
 
 	query := `
 		INSERT INTO tenants (id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at)
-		VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		RETURNING id, user_id, name, email, api_key, host, port, status, plan, max_rooms, max_rps, created_at, updated_at
 	`
 
