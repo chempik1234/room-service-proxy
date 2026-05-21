@@ -83,11 +83,9 @@ CREATE TABLE IF NOT EXISTS request_logs (
     id SERIAL PRIMARY KEY,
     tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
     method TEXT,
-    path TEXT,
     request_type TEXT, -- unary, stream
     status_code INTEGER,
     latency_ms INTEGER,
-    response_time INTEGER, -- Add this field for compatibility
     created_at TIMESTAMP DEFAULT NOW()
 );
 
@@ -178,11 +176,14 @@ $$ language 'plpgsql';
 --    ALTER TABLE tenants ADD COLUMN IF NOT EXISTS user_id TEXT REFERENCES users(id) ON DELETE CASCADE;
 --    CREATE INDEX IF NOT EXISTS idx_tenants_user_id ON tenants(user_id);
 --
--- 2. Add response_time column to request_logs if using old schema:
---    ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS response_time INTEGER;
---
--- 3. Add request_type column to request_logs if using old schema:
+-- 2. Add request_type column to request_logs if using old schema:
 --    ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS request_type TEXT;
+--    CREATE INDEX IF NOT EXISTS idx_request_logs_request_type ON request_logs(request_type);
+--    UPDATE request_logs SET request_type = 'unary' WHERE request_type IS NULL;
+--
+-- 3. Drop unused columns from request_logs:
+--    ALTER TABLE request_logs DROP COLUMN IF EXISTS path;
+--    ALTER TABLE request_logs DROP COLUMN IF EXISTS response_time;
 --
 -- 4. Create users table if it doesn't exist (see above)
 -- 5. Create auth_tokens table if it doesn't exist (see above)
@@ -220,7 +221,6 @@ SELECT
     tenant_id,
     COUNT(*) as total_requests,
     AVG(latency_ms) as avg_latency,
-    AVG(response_time) as avg_response_time,
     COUNT(CASE WHEN status_code >= 200 AND status_code < 300 THEN 1 END) as success_requests,
     COUNT(CASE WHEN status_code >= 400 THEN 1 END) as error_requests,
     DATE(created_at) as request_date
