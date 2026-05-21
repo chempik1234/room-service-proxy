@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/chempik1234/room-service-proxy/internal/ports"
@@ -618,18 +617,30 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 		}
 	}
 
-	var rows pgx.Rows
-	var err error
+	var logs []*ports.RequestLogEntry
 
 	// Check if user is admin or regular user
 	authType := c.GetString("authType")
 	if authType == "admin" {
 		// Admin can see logs for all tenants
-		rows, err = api.db.Query(c.Request.Context(),
-			`SELECT tenant_id, method, request_type, status_code, latency_ms, created_at
-			 FROM request_logs
-			 ORDER BY created_at DESC
-			 LIMIT $1`, limit)
+		storageLogs, err := api.requestLogStorage.GetRecentRequestLogs(c.Request.Context(), nil, limit)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		// Convert to response format
+		logs = make([]*ports.RequestLogEntry, len(storageLogs))
+		for i, log := range storageLogs {
+			logs[i] = &ports.RequestLogEntry{
+				TenantID:    log.TenantID,
+				Method:      log.Method,
+				RequestType: log.RequestType,
+				StatusCode:  log.StatusCode,
+				LatencyMs:   log.LatencyMs,
+				Timestamp:   log.Timestamp.Format("2006-01-02 15:04:05"),
+			}
+		}
 	} else {
 		// Regular user can only see logs for their own tenants
 		user := c.MustGet("user").(*User)
@@ -648,39 +659,25 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 			tenantIDs[i] = tenant.ID
 		}
 
-		// Query logs only for user's tenants
-		//nolint:staticcheck // error is checked on line 541
-		rows, err = api.db.Query(c.Request.Context(),
-			`SELECT tenant_id, method, request_type, status_code, latency_ms, created_at
-			 FROM request_logs
-			 WHERE tenant_id = ANY($1)
-			 ORDER BY created_at DESC
-			 LIMIT $2`, tenantIDs, limit)
-	}
-
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	type LogEntry struct {
-		TenantID     string `json:"tenantId"`
-		Method       string `json:"method"`
-		RequestType string `json:"requestType"`
-		StatusCode   int    `json:"statusCode"`
-		LatencyMs   int    `json:"latencyMs"`
-		Timestamp    string `json:"timestamp"`
-	}
-
-	logs := []LogEntry{}
-	for rows.Next() {
-		var log LogEntry
-		err := rows.Scan(&log.TenantID, &log.Method, &log.RequestType, &log.StatusCode, &log.LatencyMs, &log.Timestamp)
+		// Get logs only for user's tenants
+		storageLogs, err := api.requestLogStorage.GetRecentRequestLogs(c.Request.Context(), tenantIDs, limit)
 		if err != nil {
-			continue
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
 		}
-		logs = append(logs, log)
+
+		// Convert to response format
+		logs = make([]*ports.RequestLogEntry, len(storageLogs))
+		for i, log := range storageLogs {
+			logs[i] = &ports.RequestLogEntry{
+				TenantID:    log.TenantID,
+				Method:      log.Method,
+				RequestType: log.RequestType,
+				StatusCode:  log.StatusCode,
+				LatencyMs:   log.LatencyMs,
+				Timestamp:   log.Timestamp.Format("2006-01-02 15:04:05"),
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, logs)

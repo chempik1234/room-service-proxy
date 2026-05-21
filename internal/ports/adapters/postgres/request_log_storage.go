@@ -83,6 +83,40 @@ func (s *PostgresRequestLogStorage) GetRequestLogsByTenant(ctx context.Context, 
 	return logs, rows.Err()
 }
 
+// GetRecentRequestLogs retrieves recent logs, optionally filtered by tenant IDs
+func (s *PostgresRequestLogStorage) GetRecentRequestLogs(ctx context.Context, tenantIDs []string, limit int) ([]*models.RequestLog, error) {
+	query := `
+		SELECT tenant_id, method, request_type, status_code, latency_ms, created_at
+		FROM request_logs
+	`
+
+	var args []interface{}
+	if tenantIDs != nil && len(tenantIDs) > 0 {
+		query += ` WHERE tenant_id = ANY($1) ORDER BY created_at DESC LIMIT $2`
+		args = []interface{}{tenantIDs, limit}
+	} else {
+		query += ` ORDER BY created_at DESC LIMIT $1`
+		args = []interface{}{limit}
+	}
+
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []*models.RequestLog
+	for rows.Next() {
+		var log models.RequestLog
+		if err := rows.Scan(&log.TenantID, &log.Method, &log.RequestType, &log.StatusCode, &log.LatencyMs, &log.Timestamp); err != nil {
+			return nil, err
+		}
+		logs = append(logs, &log)
+	}
+
+	return logs, rows.Err()
+}
+
 // DeleteOldRequestLogs removes old request logs to manage storage size
 func (s *PostgresRequestLogStorage) DeleteOldRequestLogs(ctx context.Context, olderThan string) error {
 	query := fmt.Sprintf("DELETE FROM request_logs WHERE created_at < NOW() - INTERVAL '%s'", olderThan)

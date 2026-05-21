@@ -154,8 +154,24 @@ type RequestLogStorage interface {
 	// Returns: empty slice if no logs found (not error)
 	GetRequestLogsByTenant(ctx context.Context, tenantID string, limit int) ([]*models.RequestLog, error)
 
+	// GetRecentRequestLogs retrieves recent logs, optionally filtered by tenant IDs
+	// tenantIDs: if provided, only returns logs for these tenants (nil for all tenants)
+	// limit: maximum number of logs to return
+	// Returns: empty slice if no logs found (not error)
+	GetRecentRequestLogs(ctx context.Context, tenantIDs []string, limit int) ([]*models.RequestLog, error)
+
 	// DeleteOldRequestLogs removes old request logs to manage storage size
 	// olderThan format: "7 days", "30 days", "3 months", etc.
 	// Returns: error if cleanup fails
 	DeleteOldRequestLogs(ctx context.Context, olderThan string) error
+}
+
+// RequestLogEntry represents a request log entry for API responses
+type RequestLogEntry struct {
+	TenantID    string `json:"tenantId"`
+	Method      string `json:"method"`
+	RequestType string `json:"requestType"`
+	StatusCode  int    `json:"statusCode"`
+	LatencyMs   int    `json:"latencyMs"`
+	Timestamp   string `json:"timestamp"`
 }
