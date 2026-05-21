@@ -276,6 +276,17 @@ func (api *AdminAPI) getTenant(c *gin.Context) {
 		return
 	}
 
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "user" {
+		// Regular user can only view their own tenants
+		user := c.MustGet("user").(*User)
+		if tenant.UserID != user.ID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to view this tenant"})
+			return
+		}
+	}
+
 	c.JSON(http.StatusOK, tenant)
 }
 
@@ -317,6 +328,17 @@ func (api *AdminAPI) updateTenant(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Tenant not found"})
 		return
+	}
+
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "user" {
+		// Regular user can only update their own tenants
+		user := c.MustGet("user").(*User)
+		if existing.UserID != user.ID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to update this tenant"})
+			return
+		}
 	}
 
 	// Update fields
@@ -369,13 +391,26 @@ func (api *AdminAPI) deleteTenant(c *gin.Context) {
 
 	storage := api.tenantSvc.GetStorage()
 
-	// Set tenant status to "deleting" before starting cleanup
-	log.Printf("🔄 Marking tenant %s as deleting", id)
+	// Get tenant first to check ownership
 	tenant, err := storage.GetTenant(ctx, id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Tenant not found"})
 		return
 	}
+
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "user" {
+		// Regular user can only delete their own tenants
+		user := c.MustGet("user").(*User)
+		if tenant.UserID != user.ID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to delete this tenant"})
+			return
+		}
+	}
+
+	// Set tenant status to "deleting" before starting cleanup
+	log.Printf("🔄 Marking tenant %s as deleting", id)
 	tenant.Status = "deleting"
 	if err := storage.UpdateTenant(ctx, tenant); err != nil {
 		log.Printf("⚠️  Failed to mark tenant %s as deleting: %v", id, err)
@@ -422,6 +457,25 @@ func (api *AdminAPI) regenerateAPIKey(c *gin.Context) {
 	defer cancel()
 
 	storage := api.tenantSvc.GetStorage()
+
+	// Get tenant first to check ownership
+	tenant, err := storage.GetTenant(ctx, id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Tenant not found"})
+		return
+	}
+
+	// Check if user is admin or regular user
+	authType := c.GetString("authType")
+	if authType == "user" {
+		// Regular user can only regenerate API keys for their own tenants
+		user := c.MustGet("user").(*User)
+		if tenant.UserID != user.ID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "You don't have permission to regenerate API key for this tenant"})
+			return
+		}
+	}
+
 	newAPIKey, err := storage.RegenerateAPIKey(ctx, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("Failed to regenerate API key: %v", err)})

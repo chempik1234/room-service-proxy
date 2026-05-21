@@ -87,7 +87,10 @@ func main() {
 
 	// Initialize proxy service
 	appLogger := logger.GetLoggerFromCtx(ctx)
-	proxyService := transportgrpc.NewService(storageRepo, limiter, cfg, appLogger)
+	proxyService := transportgrpc.NewService(storageRepo, requestLogStorage, limiter, cfg, appLogger)
+
+	// Initialize log processor
+	transportgrpc.InitLogProcessor(requestLogStorage)
 
 	// Create deployment provider and health check service
 	deployer, err := createDeployer(cfg)

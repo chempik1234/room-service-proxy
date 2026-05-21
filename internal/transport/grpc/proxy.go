@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/chempik1234/room-service-proxy/internal/config"
+	"github.com/chempik1234/room-service-proxy/internal/models"
 	"github.com/chempik1234/room-service-proxy/internal/ports"
 	"github.com/chempik1234/room-service-proxy/internal/ports/adapters/postgres"
 	"github.com/chempik1234/room-service-proxy/internal/ratelimit"
@@ -33,22 +34,24 @@ const (
 
 // Service handles gRPC proxying
 type Service struct {
-	storageRepo *postgres.PostgresTenantStorage
-	limiter     *ratelimit.Limiter
-	config      *config.Config
-	logger      *logger.Logger // Application logger (not request-scoped)
+	storageRepo       *postgres.PostgresTenantStorage
+	requestLogStorage ports.RequestLogStorage
+	limiter           *ratelimit.Limiter
+	config            *config.Config
+	logger            *logger.Logger // Application logger (not request-scoped)
 	// Connection pool for tenant VMs
 	tenantConns sync.Map // map[string]*grpc.ClientConn
 }
 
 // NewService creates a new proxy service
-func NewService(storageRepo *postgres.PostgresTenantStorage, limiter *ratelimit.Limiter, cfg *config.Config, appLogger *logger.Logger) *Service {
+func NewService(storageRepo *postgres.PostgresTenantStorage, requestLogStorage ports.RequestLogStorage, limiter *ratelimit.Limiter, cfg *config.Config, appLogger *logger.Logger) *Service {
 	return &Service{
-		storageRepo: storageRepo,
-		limiter:     limiter,
-		config:      cfg,
-		logger:      appLogger,
-		tenantConns: sync.Map{},
+		storageRepo:       storageRepo,
+		requestLogStorage: requestLogStorage,
+		limiter:           limiter,
+		config:            cfg,
+		logger:            appLogger,
+		tenantConns:       sync.Map{},
 	}
 }
 
@@ -485,8 +488,12 @@ type logEntry struct {
 // logChannel is a buffered channel for async logging
 var logChannel = make(chan logEntry, 1000)
 
-// init starts the background log processor
-func init() {
+// requestLogStorage holds the storage instance for log processing
+var requestLogStorage ports.RequestLogStorage
+
+// InitLogProcessor starts the background log processor with storage
+func InitLogProcessor(storage ports.RequestLogStorage) {
+	requestLogStorage = storage
 	go processLogEntries()
 }
 
@@ -502,10 +509,27 @@ func processSingleLogEntry(entry logEntry) {
 	_, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// For now, just print to stderr to avoid connection issues
-	if entry.statusCode >= 400 {
-		fmt.Fprintf(os.Stderr, "[ERROR] tenant=%s method=%s status=%d latency_ms=%d\n",
-			entry.tenantID, entry.method, entry.statusCode, entry.latencyMs)
+	// Store log in database
+	if requestLogStorage != nil {
+		log := &models.RequestLog{
+			TenantID:    entry.tenantID,
+			Method:      entry.method,
+			RequestType: entry.requestType,
+			StatusCode:  entry.statusCode,
+			LatencyMs:   entry.latencyMs,
+		}
+
+		if err := requestLogStorage.CreateRequestLog(context.Background(), log); err != nil {
+			// Log to stderr on failure
+			fmt.Fprintf(os.Stderr, "[ERROR] failed to store log: tenant=%s method=%s error=%v\n",
+				entry.tenantID, entry.method, err)
+		}
+	} else {
+		// Fallback to stderr if no storage configured
+		if entry.statusCode >= 400 {
+			fmt.Fprintf(os.Stderr, "[ERROR] tenant=%s method=%s status=%d latency_ms=%d\n",
+				entry.tenantID, entry.method, entry.statusCode, entry.latencyMs)
+		}
 	}
 }
 
