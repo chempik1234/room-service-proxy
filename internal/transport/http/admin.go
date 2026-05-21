@@ -626,7 +626,7 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 	if authType == "admin" {
 		// Admin can see logs for all tenants
 		rows, err = api.db.Query(c.Request.Context(),
-			`SELECT tenant_id, method, path, status_code, response_time, created_at
+			`SELECT tenant_id, method, request_type, status_code, latency_ms, created_at
 			 FROM request_logs
 			 ORDER BY created_at DESC
 			 LIMIT $1`, limit)
@@ -651,7 +651,7 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 		// Query logs only for user's tenants
 		//nolint:staticcheck // error is checked on line 541
 		rows, err = api.db.Query(c.Request.Context(),
-			`SELECT tenant_id, method, path, status_code, response_time, created_at
+			`SELECT tenant_id, method, request_type, status_code, latency_ms, created_at
 			 FROM request_logs
 			 WHERE tenant_id = ANY($1)
 			 ORDER BY created_at DESC
@@ -667,16 +667,16 @@ func (api *AdminAPI) getLogs(c *gin.Context) {
 	type LogEntry struct {
 		TenantID     string `json:"tenantId"`
 		Method       string `json:"method"`
-		Path         string `json:"path"`
+		RequestType string `json:"requestType"`
 		StatusCode   int    `json:"statusCode"`
-		ResponseTime int    `json:"responseTime"`
+		LatencyMs   int    `json:"latencyMs"`
 		Timestamp    string `json:"timestamp"`
 	}
 
 	logs := []LogEntry{}
 	for rows.Next() {
 		var log LogEntry
-		err := rows.Scan(&log.TenantID, &log.Method, &log.Path, &log.StatusCode, &log.ResponseTime, &log.Timestamp)
+		err := rows.Scan(&log.TenantID, &log.Method, &log.RequestType, &log.StatusCode, &log.LatencyMs, &log.Timestamp)
 		if err != nil {
 			continue
 		}

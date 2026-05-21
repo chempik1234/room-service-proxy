@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     tenant_id TEXT REFERENCES tenants(id) ON DELETE CASCADE,
     method TEXT,
     path TEXT,
+    request_type TEXT, -- unary, stream
     status_code INTEGER,
     latency_ms INTEGER,
     response_time INTEGER, -- Add this field for compatibility
@@ -180,8 +181,11 @@ $$ language 'plpgsql';
 -- 2. Add response_time column to request_logs if using old schema:
 --    ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS response_time INTEGER;
 --
--- 3. Create users table if it doesn't exist (see above)
--- 4. Create auth_tokens table if it doesn't exist (see above)
+-- 3. Add request_type column to request_logs if using old schema:
+--    ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS request_type TEXT;
+--
+-- 4. Create users table if it doesn't exist (see above)
+-- 5. Create auth_tokens table if it doesn't exist (see above)
 
 -- ============================================
 -- VIEWS FOR COMMON QUERIES
